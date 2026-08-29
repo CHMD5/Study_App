@@ -1,0 +1,144 @@
+'use client';
+
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { Trash2 } from 'lucide-react';
+import { Badge, Card, EmptyState, Input, Select, Spinner } from '@/components/ui';
+import type { Question } from '@/db/schema';
+
+const SUBJECTS = ['physics', 'chemistry', 'maths'] as const;
+const STATUSES = ['draft', 'verified', 'archived'] as const;
+const TYPES = ['mcq', 'integer'] as const;
+
+const STATUS_TONE = { draft: 'amber', verified: 'green', archived: 'slate' } as const;
+
+export function QuestionsListView() {
+  const initialParams = useSearchParams();
+  const [subject, setSubject] = useState('');
+  const [status, setStatus] = useState('');
+  const [type, setType] = useState('');
+  const [search, setSearch] = useState('');
+  const [paperId] = useState(initialParams.get('paperId') ?? '');
+
+  const [rows, setRows] = useState<Question[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (subject) params.set('subject', subject);
+    if (status) params.set('status', status);
+    if (type) params.set('type', type);
+    if (search) params.set('q', search);
+    if (paperId) params.set('paperId', paperId);
+
+    setLoading(true);
+    const handle = setTimeout(() => {
+      fetch(`/api/questions?${params.toString()}`)
+        .then((r) => r.json())
+        .then((body) => {
+          setRows(body.questions ?? []);
+          setTotal(body.total ?? 0);
+        })
+        .finally(() => setLoading(false));
+    }, 250); // debounce the free-text search
+
+    return () => clearTimeout(handle);
+  }, [subject, status, type, search, paperId]);
+
+  async function onDelete(q: Question) {
+    if (!confirm(`Delete question ${q.humanCode ?? q.id}? This cannot be undone.`)) return;
+    const res = await fetch(`/api/questions/${q.id}`, { method: 'DELETE' });
+    if (res.ok) {
+      setRows((prev) => prev.filter((r) => r.id !== q.id));
+      setTotal((t) => t - 1);
+    } else {
+      const body = await res.json().catch(() => ({}));
+      alert(body.message ?? 'Could not delete this question.');
+    }
+  }
+
+  return (
+    <div className="mt-6 space-y-4">
+      <Card>
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Select value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject">
+            <option value="">All subjects</option>
+            {SUBJECTS.map((s) => (
+              <option key={s} value={s}>
+                {s[0].toUpperCase() + s.slice(1)}
+              </option>
+            ))}
+          </Select>
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+            <option value="">All statuses</option>
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s[0].toUpperCase() + s.slice(1)}
+              </option>
+            ))}
+          </Select>
+          <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+            <option value="">All types</option>
+            {TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t.toUpperCase()}
+              </option>
+            ))}
+          </Select>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search question text…"
+            aria-label="Search"
+          />
+        </div>
+      </Card>
+
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Spinner className="size-6 text-brand-600" />
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState title="No questions match these filters" hint="Try clearing a filter, or ingest a paper first." />
+      ) : (
+        <Card>
+          <ul className="divide-y divide-slate-100">
+            {rows.map((q) => (
+              <li key={q.id} className="flex items-start gap-1 px-2 py-1 hover:bg-slate-50">
+                <Link href={`/teacher/questions/${q.id}`} className="flex min-w-0 flex-1 items-start gap-3 px-2 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-slate-800">{stripLatex(q.body)}</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {q.humanCode} · {q.subject} · {q.type}
+                      {q.chapter ? ` · ${q.chapter}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {q.difficulty ? <Badge>D{q.difficulty}</Badge> : null}
+                    <Badge tone={STATUS_TONE[q.status]}>{q.status}</Badge>
+                  </div>
+                </Link>
+                <button
+                  onClick={() => onDelete(q)}
+                  aria-label={`Delete question ${q.humanCode ?? q.id}`}
+                  className="mt-2 shrink-0 rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+            Showing {rows.length} of {total}
+          </p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function stripLatex(body: string): string {
+  return body.replace(/\[\[IMG:[^\]]+\]\]/g, '[image]').replace(/\$+/g, '').slice(0, 160);
+}

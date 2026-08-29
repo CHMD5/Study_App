@@ -1,0 +1,22 @@
+# Runtime state — the entire mutable world of the local app.
+# Deleting this directory resets the app; copying it is a complete backup.
+/data/
+
+# Secrets
+.env.local
+.env*.local
+
+# Build artefacts
+/node_modules/
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Generated at dev/build time by scripts/copy-pdf-worker.mjs
+/public/pdf.worker.min.mjs
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/

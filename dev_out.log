@@ -1,0 +1,21 @@
+﻿
+> vidya-test-prep@0.1.0-local predev
+> node scripts/copy-pdf-worker.mjs
+
+[pdf-worker] copied to public/pdf.worker.min.mjs
+
+> vidya-test-prep@0.1.0-local dev
+> next dev
+
+   ▲ Next.js 15.5.24
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.2:3000
+   - Experiments (use with caution):
+     · largePageDataBytes: 524288
+
+ ✓ Starting...
+ ✓ Ready in 14.7s
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 5.9s (500 modules)
+[auth] generated a session secret at data/.session-secret
+ POST /api/auth/login 200 in 8413ms

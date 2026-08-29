@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="56" viewBox="0 0 300 56" role="img" aria-label="Vidya Test Prep — JEE Mains Test Platform">
+  <title>Vidya Test Prep — JEE Mains Test Platform</title>
+
+  <!-- mark, scaled 64 -> 44 -->
+  <g transform="translate(4 6) scale(0.6875)">
+    <rect width="64" height="64" rx="14" fill="#1E3A8A"/>
+    <path d="M32 11.5c3.6 3.3 5.4 6.3 5.4 9.1a5.4 5.4 0 1 1-10.8 0c0-2.8 1.8-5.8 5.4-9.1z" fill="#F59E0B"/>
+    <path d="M11.5 33c6.6-2.9 13.3-2.9 19.9 0v17.4c-6.6-2.9-13.3-2.9-19.9 0z" fill="#ffffff"/>
+    <path d="M52.5 33c-6.6-2.9-13.3-2.9-19.9 0v17.4c6.6-2.9 13.3-2.9 19.9 0z" fill="#ffffff" fill-opacity=".72"/>
+    <path d="M32 33v17.4" stroke="#1E3A8A" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="60" y="27"
+        font-family="Segoe UI, Inter, system-ui, -apple-system, sans-serif"
+        font-size="17" font-weight="600" letter-spacing="1.1" fill="#0F172A">VIDYA TEST PREP</text>
+  <text x="60" y="42"
+        font-family="Segoe UI, Inter, system-ui, -apple-system, sans-serif"
+        font-size="10" font-weight="400" letter-spacing="0.3" fill="#64748B">JEE Mains Test Platform</text>
+</svg>

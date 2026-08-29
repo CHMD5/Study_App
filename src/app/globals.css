@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+@import 'katex/dist/katex.min.css';
+
+@theme {
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-500: #3b5bdb;
+  --color-brand-600: #2a44b8;
+  --color-brand-700: #1e3a8a;
+  --color-brand-800: #172e6e;
+  --color-brand-900: #101f4a;
+
+  --color-accent-100: #fef3c7;
+  --color-accent-400: #fbbf24;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+
+  --font-sans: 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, ui-monospace, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* KaTeX inherits a slightly-too-large size against 14px UI text. */
+.katex {
+  font-size: 1.06em;
+}
+
+/* Question bodies frequently carry wide display math or tables; let them scroll
+   inside their own box rather than blowing out the page. */
+.q-render :is(table) {
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+}
+.q-render :is(th, td) {
+  border: 1px solid #cbd5e1;
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+.q-render :is(th) {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+.q-render .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15rem 0;
+}
+
+/* Focus ring that is visible on both the light page and the dark header. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
