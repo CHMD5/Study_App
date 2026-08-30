@@ -7,6 +7,7 @@ const NAV: NavItem[] = [
   { href: '/teacher/questions', label: 'Question bank' },
   { href: '/teacher/extraction-prompt', label: 'Extraction prompt' },
   { href: '/teacher/tests', label: 'Tests' },
+  { href: '/teacher/analytics', label: 'Analytics' },
 ];
 
 export default async function TeacherLayout({ children }: { children: React.ReactNode }) {

@@ -1,61 +1,61 @@
-# Vidya Test Prep — local build
+# Vidya Test Prep — Local Build Quick Reference
 
-This is the **local-first** edition of [JEE-Test-Platform-LLD.md](JEE-Test-Platform-LLD.md), described in
-[JEE-Test-Platform-Local-Build-Plan.md](JEE-Test-Platform-Local-Build-Plan.md). Everything — database, source
-PDFs, cropped images — lives under `data/` on this machine. No cloud services, no API keys.
+This is the **local-first** edition of [JEE-Test-Platform-LLD.md](JEE-Test-Platform-LLD.md), described in [JEE-Test-Platform-Local-Build-Plan.md](JEE-Test-Platform-Local-Build-Plan.md). Everything — database, source PDFs, cropped images — lives under `data/` on this machine with zero cloud dependencies.
 
-Currently implemented: **stages 0–5** of the build plan (auth, paper upload, PDF viewer + crop tool,
-paste-JSON ingest, question editor with KaTeX/mhchem + verify gate). The test builder, test runner,
-grading, and analytics (stages 6–9) are not built yet.
+**Current Status:** All build stages (Stages 0–10) are complete and operational.
 
-## Running it
+---
 
-```
+## 1. Quick Start
+
+```bash
+# 1. Install packages
 npm install
-npm run seed   # first time only — creates the two logins + demo data
+
+# 2. Seed database (first time or after reset)
+npm run seed
+
+# 3. Start local development server
 npm run dev
 ```
 
-Open http://localhost:3000 and sign in as:
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
-| Username  | Password | Role    |
-|-----------|----------|---------|
-| `Teacher` | `112345` | teacher |
-| `Student` | `112345` | student |
+---
 
-These are local-development credentials only — delete them before any deployment.
+## 2. Default Logins
 
-## Where everything lives
+| Username | Password | Role | Features |
+|---|---|---|---|
+| `Teacher` | `112345` | `teacher` | Digitize papers, crop images, build tests, publish, view cohort analytics, export CSV |
+| `Student` | `112345` | `student` | Take timed JEE CBT exams, review step-by-step solutions, view personal analytics |
 
-Everything mutable is under `data/` (gitignored):
+---
 
-- `data/pgdata/` — the PGlite (embedded Postgres) database
-- `data/papers/` — uploaded source PDFs
-- `data/images/` — cropped question images (WebP)
-- `data/.session-secret` — auto-generated on first boot if `SESSION_SECRET` isn't set in `.env.local`
+## 3. How to Use
 
-**Deleting `data/` resets the entire app to empty.** Re-run `npm run seed` afterward to get the two
-logins back.
+### As a Teacher:
+1. **Digitize Paper**: Upload PDF at `/teacher/papers` → copy prompt at `/teacher/extraction-prompt` → run Gemini in browser → paste JSON into Ingest tab.
+2. **Crop & Verify**: In Question Editor (`/teacher/questions/[id]`), drag crops on the PDF canvas for `[[IMG:...]]` placeholders, set answers, and click **Verify**.
+3. **Build & Publish Test**: At `/teacher/tests/new`, configure duration and shuffle settings → in Test Builder (`/teacher/tests/[id]`), add questions from bank → click **Publish Test**.
+4. **Analytics**: Inspect score distribution, candidate rankings, and item accuracy at `/teacher/tests/[id]/analytics` and download the CSV scorecard.
 
-## Config
+### As a Student:
+1. **Take Exam**: At `/student`, click **Take Test** → agree to instructions → enter the CBT Test Runner (`/student/attempts/[id]`).
+2. **Test Runner Controls**: Switch Physics/Chemistry/Maths tabs, select options, use **Save & Next** or **Mark for Review & Next**, navigate via the 75-cell palette.
+3. **Disconnect Protection**: Answers are mirrored to IndexedDB locally; you can complete exams even during offline network interruptions.
+4. **Review & Analytics**: After submission, inspect step-by-step KaTeX solutions at `/student/attempts/[id]/result` and track performance curves at `/student/analytics`.
 
-Zero-config by default. To pin a session secret or move the data directory, copy
-[env.local.example](env.local.example) to `.env.local` and edit it.
+---
 
-## A note on security
+## 4. Scripts & Operations
 
-Production relies on Postgres Row-Level Security so a student can never read an answer key at the
-database level (LLD §4.9). PGlite has no auth roles, so that guarantee doesn't exist locally — see
-`drizzle/production-only/9999_rls.sql` for the unapplied production policy, and §5 of the build plan
-for what protects answer keys in this local build instead (an explicit-field-pick DTO layer plus an
-automated leak test, both landing when the student-facing test runner is built in a later stage).
-
-## Scripts
-
-- `npm run dev` — start the app (copies the pdf.js worker first)
-- `npm run seed` — create the two logins + 12 data-only demo students + a demo paper/questions
-- `npm test` — Vitest (ingest-schema validation, body-parsing)
-- `npm run typecheck` — `tsc --noEmit`
-
-`npm run seed` and `npm run dev` cannot both hold the PGlite data directory open at once — stop the
-dev server before seeding, or run seed before starting dev.
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Starts local Next.js dev server |
+| `npm run seed` | Seeds default accounts, demo paper, and sample tests |
+| `npm run backup` | Dumps database and copies PDFs/images to `data/backups/` |
+| `npm run restore` | Restores database and files from latest backup |
+| `npm run reset` | Resets `data/`, re-migrates, and re-seeds |
+| `npm test` | Runs the Vitest test suite |
+| `npm run typecheck` | Validates TypeScript types (`tsc --noEmit`) |

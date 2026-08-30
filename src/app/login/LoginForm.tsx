@@ -43,7 +43,7 @@ export function LoginForm() {
   return (
     <form
       onSubmit={onSubmit}
-      className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-slate-200"
+      className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-slate-200 transition-colors dark:bg-slate-900 dark:ring-slate-800"
       aria-label="Sign in"
     >
       {notice ? (

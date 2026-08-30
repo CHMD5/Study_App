@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, FileWarning } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns2, FileWarning } from 'lucide-react';
 import { Alert, Badge, Button, buttonClass, Card, CardBody, CardHeader, CardTitle, Textarea } from '@/components/ui';
 import { CopyButton } from '@/components/CopyButton';
+import { parseIngestJson } from '@/lib/json-repair';
 import { IngestPayload } from '@/lib/zod/ingest';
 import type { ValidationIssue } from '@/lib/http';
 import type { Paper } from '@/db/schema';
@@ -33,23 +34,24 @@ export function IngestView({
 
   const questionCount = useMemo(() => {
     try {
-      const parsed = JSON.parse(raw);
+      const { parsed } = parseIngestJson<any>(raw);
       return Array.isArray(parsed?.questions) ? parsed.questions.length : null;
     } catch {
       return null;
     }
   }, [raw]);
 
-  function validateClientSide(): boolean {
+  function validateClientSide(): { valid: boolean; data?: any } {
     setServerError(null);
     setResult(null);
     let parsedJson: unknown;
     try {
-      parsedJson = JSON.parse(raw);
+      const { parsed } = parseIngestJson(raw);
+      parsedJson = parsed;
     } catch (err) {
       setIssues([{ path: '(root)', message: `Not valid JSON: ${(err as Error).message}` }]);
       setValidCount(null);
-      return false;
+      return { valid: false };
     }
 
     const parsed = IngestPayload.safeParse(parsedJson);
@@ -61,16 +63,17 @@ export function IngestView({
         })),
       );
       setValidCount(null);
-      return false;
+      return { valid: false };
     }
 
     setIssues([]);
     setValidCount(parsed.data.questions.length);
-    return true;
+    return { valid: true, data: parsed.data };
   }
 
   async function onStage() {
-    if (!validateClientSide()) return;
+    const { valid, data } = validateClientSide();
+    if (!valid || !data) return;
     setStaging(true);
     setServerError(null);
 
@@ -78,7 +81,7 @@ export function IngestView({
       const res = await fetch(`/api/papers/${paper.id}/ingest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...JSON.parse(raw), promptVersion: activePrompt?.version }),
+        body: JSON.stringify({ ...data, promptVersion: activePrompt?.version }),
       });
       const body = await res.json();
 
@@ -103,14 +106,10 @@ export function IngestView({
   }
 
   function jumpToIssue(issue: ValidationIssue) {
-    // Best-effort: find the sourceQno referenced by the path (e.g.
-    // "questions[7].type") and scroll/select that question's block in the
-    // textarea, since line numbers in pasted JSON are otherwise meaningless to
-    // the teacher.
     const idxMatch = issue.path.match(/^questions\[(\d+)\]/);
     if (!idxMatch || !textareaRef.current) return;
     try {
-      const parsed = JSON.parse(raw);
+      const { parsed } = parseIngestJson<any>(raw);
       const q = parsed.questions?.[Number(idxMatch[1])];
       if (!q) return;
       const needle = JSON.stringify(q).slice(0, 40);
@@ -137,7 +136,7 @@ export function IngestView({
             onClick={() => setPromptOpen((v) => !v)}
             aria-expanded={promptOpen}
           >
-            <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <span className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
               {promptOpen ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
               Extraction prompt ({activePrompt?.version ?? 'none found'})
             </span>
@@ -146,11 +145,11 @@ export function IngestView({
             </span>
           </button>
           {promptOpen && activePrompt ? (
-            <CardBody className="border-t border-slate-200 pt-3">
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-800 ring-1 ring-inset ring-slate-200">
+            <CardBody className="border-t border-slate-200 pt-3 dark:border-slate-800">
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-800 ring-1 ring-inset ring-slate-200 dark:bg-slate-950 dark:text-slate-200 dark:ring-slate-800">
                 {activePrompt.text}
               </pre>
-              <Link href="/teacher/extraction-prompt" className="mt-2 inline-block text-xs text-brand-700 hover:underline">
+              <Link href="/teacher/extraction-prompt" className="mt-2 inline-block text-xs text-brand-700 hover:underline dark:text-brand-400">
                 View all prompt versions →
               </Link>
             </CardBody>
@@ -183,7 +182,7 @@ export function IngestView({
               <button
                 type="button"
                 onClick={() => setShowTruncationHint((v) => !v)}
-                className="ml-auto flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+                className="ml-auto flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
               >
                 <FileWarning className="size-3.5" aria-hidden />
                 Output truncated?
@@ -196,7 +195,7 @@ export function IngestView({
                   Paste this into the same chat, then stitch its array elements onto the truncated list
                   before pasting here.
                 </p>
-                <pre className="whitespace-pre-wrap rounded-md bg-white/60 p-2 font-mono text-[11px] ring-1 ring-inset ring-amber-200">
+                <pre className="whitespace-pre-wrap rounded-md bg-white/60 p-2 font-mono text-[11px] ring-1 ring-inset ring-amber-200 dark:bg-slate-900/60 dark:ring-amber-800">
                   {truncationPrompt}
                 </pre>
                 <CopyButton text={truncationPrompt} label="Copy fix-up prompt" variant="secondary" size="sm" className="mt-2" />
@@ -210,25 +209,39 @@ export function IngestView({
             {serverError ? <Alert tone="red">{serverError}</Alert> : null}
 
             {result ? (
-              <Alert tone="green" title="Staged">
-                {result.created} draft question(s) created.{' '}
-                <Link href={`/teacher/questions?paperId=${paper.id}`} className="underline">
-                  Open the question bank →
-                </Link>
-              </Alert>
+              <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-950/40">
+                <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+                  🎉 {result.created} draft question(s) created!
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href={`/teacher/papers/${paper.id}/verify`}
+                    className={buttonClass('primary', 'sm')}
+                  >
+                    <Columns2 className="size-4" />
+                    Verify Paper in Split-Screen Studio →
+                  </Link>
+                  <Link
+                    href={`/teacher/questions?paperId=${paper.id}`}
+                    className={buttonClass('secondary', 'sm')}
+                  >
+                    Open in Question Bank
+                  </Link>
+                </div>
+              </div>
             ) : null}
 
             {issues.length > 0 ? (
-              <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-200">
-                <p className="border-b border-red-200 px-3 py-2 text-xs font-semibold text-red-800">
+              <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-200 dark:bg-red-950/40 dark:ring-red-800">
+                <p className="border-b border-red-200 px-3 py-2 text-xs font-semibold text-red-800 dark:border-red-800 dark:text-red-300">
                   {issues.length} issue(s) — nothing was saved
                 </p>
-                <ul className="max-h-64 divide-y divide-red-100 overflow-auto">
+                <ul className="max-h-64 divide-y divide-red-100 overflow-auto dark:divide-red-900/50">
                   {issues.map((issue, i) => (
                     <li key={i}>
                       <button
                         onClick={() => jumpToIssue(issue)}
-                        className="block w-full px-3 py-2 text-left text-xs text-red-800 hover:bg-red-100"
+                        className="block w-full px-3 py-2 text-left text-xs text-red-800 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/40"
                       >
                         <span className="font-mono">{issue.path}</span> — {issue.message}
                       </button>
@@ -247,16 +260,22 @@ export function IngestView({
             <CardTitle>Workflow</CardTitle>
           </CardHeader>
           <CardBody>
-            <ol className="space-y-2 text-sm text-slate-600">
+            <ol className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
               <li>1. Copy the prompt above</li>
               <li>2. Open Gemini Pro with the same PDF attached</li>
               <li>3. Run the prompt, copy its JSON reply</li>
               <li>4. Paste it here and Validate</li>
-              <li>5. Stage as drafts, then review in the question editor</li>
+              <li>5. Stage as drafts, then verify in the Split-Screen Studio</li>
             </ol>
-            <Link href={`/api/papers/${paper.id}/pdf`} target="_blank" className={buttonClass('secondary', 'sm', 'mt-3 w-full')}>
-              Open source PDF
-            </Link>
+            <div className="mt-4 space-y-2">
+              <Link href={`/teacher/papers/${paper.id}/verify`} className={buttonClass('primary', 'sm', 'w-full')}>
+                <Columns2 className="size-4" />
+                Open Dual-Pane Verification Studio
+              </Link>
+              <Link href={`/api/papers/${paper.id}/pdf`} target="_blank" className={buttonClass('secondary', 'sm', 'w-full')}>
+                Open source PDF
+              </Link>
+            </div>
           </CardBody>
         </Card>
       </div>

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
-import { FileText, Trash2, UploadCloud } from 'lucide-react';
+import { CheckCircle2, Columns2, FileText, Trash2, UploadCloud } from 'lucide-react';
 import { Alert, Badge, Button, buttonClass, Card, CardBody, EmptyState, Input, Label, Spinner } from '@/components/ui';
 import type { Paper } from '@/db/schema';
 
@@ -49,31 +49,37 @@ export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
       {showForm ? (
         <UploadForm onCreated={onCreated} onCancel={() => papers.length > 0 && setShowForm(false)} />
       ) : (
-        <Button onClick={() => setShowForm(true)}>
-          <UploadCloud className="size-4" aria-hidden />
-          Register a paper
-        </Button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button onClick={() => setShowForm(true)}>
+            <UploadCloud className="size-4" aria-hidden />
+            Register a paper
+          </Button>
+
+          <Link href="/teacher/questions/upload" className={buttonClass('secondary', 'sm')}>
+            Upload standalone questions
+          </Link>
+        </div>
       )}
 
       {papers.length === 0 ? (
         <EmptyState title="No papers registered yet" hint="Upload a scanned JEE paper PDF to get started." />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {papers.map((paper) => (
-            <Card key={paper.id}>
-              <CardBody className="space-y-2.5">
+            <Card key={paper.id} className="transition-all hover:shadow-md hover:ring-brand-200 dark:hover:ring-brand-800">
+              <CardBody className="space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5">
-                    <FileText className="mt-0.5 size-4 shrink-0 text-brand-600" aria-hidden />
+                    <FileText className="mt-0.5 size-4 shrink-0 text-brand-600 dark:text-brand-400" aria-hidden />
                     <div>
-                      <p className="text-sm font-semibold leading-tight text-slate-900">{paper.title}</p>
-                      <p className="mt-0.5 text-xs text-slate-500">{paper.code}</p>
+                      <p className="text-sm font-semibold leading-tight text-slate-900 dark:text-slate-100">{paper.title}</p>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{paper.code}</p>
                     </div>
                   </div>
                   <button
                     onClick={() => onDelete(paper)}
                     aria-label={`Delete ${paper.title}`}
-                    className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                   >
                     <Trash2 className="size-4" aria-hidden />
                   </button>
@@ -85,20 +91,30 @@ export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
                   <Badge>{(paper.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB</Badge>
                 </div>
 
-                <div className="flex gap-2 pt-1">
+                <div className="flex flex-col gap-2 pt-1">
                   <Link
-                    href={`/teacher/papers/${paper.id}/ingest`}
-                    className={buttonClass('secondary', 'sm', 'flex-1')}
+                    href={`/teacher/papers/${paper.id}/verify`}
+                    className={buttonClass('primary', 'sm', 'w-full')}
                   >
-                    Ingest questions
+                    <Columns2 className="size-3.5" />
+                    Verify Questions (Split View)
                   </Link>
-                  <Link
-                    href={`/api/papers/${paper.id}/pdf`}
-                    target="_blank"
-                    className={buttonClass('secondary', 'sm')}
-                  >
-                    View PDF
-                  </Link>
+
+                  <div className="flex gap-2">
+                    <Link
+                      href={`/teacher/papers/${paper.id}/ingest`}
+                      className={buttonClass('secondary', 'sm', 'flex-1')}
+                    >
+                      Ingest questions
+                    </Link>
+                    <Link
+                      href={`/api/papers/${paper.id}/pdf`}
+                      target="_blank"
+                      className={buttonClass('secondary', 'sm')}
+                    >
+                      PDF
+                    </Link>
+                  </div>
                 </div>
               </CardBody>
             </Card>
@@ -187,7 +203,7 @@ function UploadForm({ onCreated, onCancel }: { onCreated: (p: Paper) => void; on
               type="file"
               accept="application/pdf"
               required
-              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-700 hover:file:bg-brand-100"
+              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-700 hover:file:bg-brand-100 dark:text-slate-300 dark:file:bg-brand-950/80 dark:file:text-brand-300"
             />
           </div>
 

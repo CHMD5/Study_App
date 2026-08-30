@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { profiles } from '@/db/schema';
 import { verifyPassword } from './password';
@@ -16,7 +16,12 @@ export { getSession };
  */
 export async function authenticate(username: string, password: string): Promise<Session | null> {
   const db = await getDb();
-  const [user] = await db.select().from(profiles).where(eq(profiles.username, username)).limit(1);
+  const trimmed = (username ?? '').trim();
+  const [user] = await db
+    .select()
+    .from(profiles)
+    .where(sql`lower(${profiles.username}) = lower(${trimmed})`)
+    .limit(1);
 
   if (!user || !user.isActive || !user.canLogin) {
     // Still spend the time hashing, so a missing user is not measurably faster

@@ -98,19 +98,30 @@ export function QuestionsListView() {
 
       {loading ? (
         <div className="flex justify-center py-12">
-          <Spinner className="size-6 text-brand-600" />
+          <Spinner className="size-6 text-brand-600 dark:text-brand-400" />
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState title="No questions match these filters" hint="Try clearing a filter, or ingest a paper first." />
+        <EmptyState
+          title="No questions match these filters"
+          hint="Try clearing a filter, or upload questions directly."
+          action={
+            <Link
+              href="/teacher/questions/upload"
+              className="inline-flex items-center justify-center rounded-md bg-brand-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-800"
+            >
+              Upload questions
+            </Link>
+          }
+        />
       ) : (
         <Card>
-          <ul className="divide-y divide-slate-100">
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
             {rows.map((q) => (
-              <li key={q.id} className="flex items-start gap-1 px-2 py-1 hover:bg-slate-50">
+              <li key={q.id} className="flex items-start gap-1 px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                 <Link href={`/teacher/questions/${q.id}`} className="flex min-w-0 flex-1 items-start gap-3 px-2 py-2">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-slate-800">{stripLatex(q.body)}</p>
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="truncate text-sm text-slate-800 dark:text-slate-200">{stripLatex(q.body)}</p>
+                    <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                       {q.humanCode} · {q.subject} · {q.type}
                       {q.chapter ? ` · ${q.chapter}` : ''}
                     </p>
@@ -123,14 +134,14 @@ export function QuestionsListView() {
                 <button
                   onClick={() => onDelete(q)}
                   aria-label={`Delete question ${q.humanCode ?? q.id}`}
-                  className="mt-2 shrink-0 rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="mt-2 shrink-0 rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                 >
                   <Trash2 className="size-4" aria-hidden />
                 </button>
               </li>
             ))}
           </ul>
-          <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+          <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-500">
             Showing {rows.length} of {total}
           </p>
         </Card>

@@ -39,14 +39,14 @@ export function ExtractionPromptView({
   return (
     <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
       <Card>
-        <CardHeader className="sticky top-14 z-10 flex flex-row flex-wrap items-center justify-between gap-3 bg-white/95 backdrop-blur">
+        <CardHeader className="sticky top-14 z-10 flex flex-row flex-wrap items-center justify-between gap-3 bg-white/95 backdrop-blur dark:bg-slate-900/95">
           <div className="flex items-center gap-2">
             <CardTitle>Extraction prompt</CardTitle>
             <Select
               aria-label="Prompt version"
               value={versionIdx}
               onChange={(e) => setVersionIdx(Number(e.target.value))}
-              className="h-8 w-auto"
+              className="h-8 w-auto text-xs"
             >
               {prompts.map((p, i) => (
                 <option key={p.version} value={i}>
@@ -65,7 +65,7 @@ export function ExtractionPromptView({
           </div>
         </CardHeader>
         <CardBody>
-          <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-mono text-[12.5px] leading-relaxed text-slate-800 ring-1 ring-inset ring-slate-200">
+          <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-mono text-[12.5px] leading-relaxed text-slate-800 ring-1 ring-inset ring-slate-200 dark:bg-slate-950 dark:text-slate-200 dark:ring-slate-800">
             {active.text}
           </pre>
         </CardBody>
@@ -77,10 +77,10 @@ export function ExtractionPromptView({
             <CardTitle>Workflow</CardTitle>
           </CardHeader>
           <CardBody>
-            <ol className="space-y-2.5 text-sm text-slate-700">
+            <ol className="space-y-2.5 text-sm text-slate-700 dark:text-slate-300">
               {WORKFLOW.map((step, i) => (
                 <li key={i} className="flex gap-2.5">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700">
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700 dark:bg-brand-950/80 dark:text-brand-300">
                     {i + 1}
                   </span>
                   <span>{step}</span>
@@ -96,11 +96,11 @@ export function ExtractionPromptView({
             <Badge tone="amber">common on 75-Q papers</Badge>
           </CardHeader>
           <CardBody className="space-y-3">
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
               Paste this into the same chat, then stitch its array elements onto the truncated list
               before pasting into the ingest box.
             </p>
-            <pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-800 ring-1 ring-inset ring-slate-200">
+            <pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-800 ring-1 ring-inset ring-slate-200 dark:bg-slate-950 dark:text-slate-200 dark:ring-slate-800">
               {truncationPrompt}
             </pre>
             <CopyButton text={truncationPrompt} label="Copy fix-up prompt" variant="secondary" size="sm" className="w-full" />

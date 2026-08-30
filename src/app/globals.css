@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import 'katex/dist/katex.min.css';
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-brand-50: #eef2ff;
   --color-brand-100: #e0e7ff;
@@ -32,9 +34,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+html.dark body {
+  background: #090d16;
+  color: #f1f5f9;
+}
+
 /* KaTeX inherits a slightly-too-large size against 14px UI text. */
 .katex {
   font-size: 1.06em;
+}
+
+html.dark .katex {
+  color: #f1f5f9;
 }
 
 /* Question bodies frequently carry wide display math or tables; let them scroll
@@ -49,9 +60,16 @@ body {
   text-align: left;
   vertical-align: top;
 }
+html.dark .q-render :is(th, td) {
+  border-color: #334155;
+}
 .q-render :is(th) {
   background: #f1f5f9;
   font-weight: 600;
+}
+html.dark .q-render :is(th) {
+  background: #1e293b;
+  color: #f8fafc;
 }
 .q-render .katex-display {
   overflow-x: auto;

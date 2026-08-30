@@ -2,7 +2,7 @@
 const nextConfig = {
   // PGlite ships a WASM binary + fs access; it must stay outside the bundler and
   // run on the Node runtime. Bundling it produces a broken/duplicated instance.
-  serverExternalPackages: ['@electric-sql/pglite'],
+  serverExternalPackages: ['@electric-sql/pglite', 'katex'],
 
   eslint: { ignoreDuringBuilds: true },
 

@@ -2,21 +2,17 @@ import * as React from 'react';
 import { cn } from '@/lib/cn';
 
 /*
- * A small hand-rolled primitive set in the shadcn/ui shape.
- *
- * The plan called for shadcn/ui; its CLI is interactive and pulls a Radix tree
- * we would use perhaps 5% of. These cover every control stages 0-5 need, with
- * the same prop API, so swapping in the real thing later is a file deletion.
+ * A small hand-rolled primitive set in the shadcn/ui shape with dark mode support.
  */
 
 const buttonVariants = {
   primary:
-    'bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900 disabled:bg-slate-300 disabled:text-slate-500',
+    'bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 dark:disabled:text-slate-400',
   secondary:
-    'bg-white text-slate-800 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 active:bg-slate-100 disabled:text-slate-400',
-  accent: 'bg-accent-500 text-slate-900 hover:bg-accent-400 active:bg-accent-600 disabled:bg-slate-300',
-  danger: 'bg-white text-red-700 ring-1 ring-inset ring-red-300 hover:bg-red-50 active:bg-red-100',
-  ghost: 'bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+    'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 ring-1 ring-inset ring-slate-300 dark:ring-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/80 active:bg-slate-100 dark:active:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500',
+  accent: 'bg-accent-500 text-slate-900 hover:bg-accent-400 active:bg-accent-600 disabled:bg-slate-300 dark:disabled:bg-slate-700',
+  danger: 'bg-white dark:bg-slate-800 text-red-700 dark:text-red-400 ring-1 ring-inset ring-red-300 dark:ring-red-800/60 hover:bg-red-50 dark:hover:bg-red-950/40 active:bg-red-100 dark:active:bg-red-900/50',
+  ghost: 'bg-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white',
 } as const;
 
 const buttonSizes = {
@@ -70,8 +66,8 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
       <input
         ref={ref}
         className={cn(
-          'h-9 w-full rounded-md bg-white px-3 text-sm text-slate-900 ring-1 ring-inset ring-slate-300',
-          'placeholder:text-slate-400 focus:ring-2 focus:ring-brand-500 disabled:bg-slate-100 disabled:text-slate-500',
+          'h-9 w-full rounded-md bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 ring-1 ring-inset ring-slate-300 dark:ring-slate-700',
+          'placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 focus:ring-brand-500 disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-500 dark:disabled:text-slate-400',
           className,
         )}
         {...props}
@@ -88,8 +84,8 @@ export const Textarea = React.forwardRef<
     <textarea
       ref={ref}
       className={cn(
-        'w-full rounded-md bg-white p-3 text-sm text-slate-900 ring-1 ring-inset ring-slate-300',
-        'placeholder:text-slate-400 focus:ring-2 focus:ring-brand-500',
+        'w-full rounded-md bg-white dark:bg-slate-900 p-3 text-sm text-slate-900 dark:text-slate-100 ring-1 ring-inset ring-slate-300 dark:ring-slate-700',
+        'placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 focus:ring-brand-500',
         className,
       )}
       {...props}
@@ -105,8 +101,8 @@ export const Select = React.forwardRef<
     <select
       ref={ref}
       className={cn(
-        'h-9 w-full rounded-md bg-white px-2.5 text-sm text-slate-900 ring-1 ring-inset ring-slate-300',
-        'focus:ring-2 focus:ring-brand-500 disabled:bg-slate-100',
+        'h-9 w-full rounded-md bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-slate-100 ring-1 ring-inset ring-slate-300 dark:ring-slate-700',
+        'focus:ring-2 focus:ring-brand-500 disabled:bg-slate-100 dark:disabled:bg-slate-800',
         className,
       )}
       {...props}
@@ -117,7 +113,7 @@ export const Select = React.forwardRef<
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return (
     <label
-      className={cn('mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500', className)}
+      className={cn('mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400', className)}
       {...props}
     />
   );
@@ -126,18 +122,18 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('rounded-lg bg-white shadow-sm ring-1 ring-slate-200', className)}
+      className={cn('rounded-lg bg-white dark:bg-slate-900 shadow-sm ring-1 ring-slate-200 dark:ring-slate-800', className)}
       {...props}
     />
   );
 }
 
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('border-b border-slate-200 px-5 py-3.5', className)} {...props} />;
+  return <div className={cn('border-b border-slate-200 dark:border-slate-800 px-5 py-3.5', className)} {...props} />;
 }
 
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn('text-sm font-semibold text-slate-900', className)} {...props} />;
+  return <h2 className={cn('text-sm font-semibold text-slate-900 dark:text-slate-100', className)} {...props} />;
 }
 
 export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -145,11 +141,11 @@ export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivEl
 }
 
 const badgeTones = {
-  slate: 'bg-slate-100 text-slate-700 ring-slate-200',
-  brand: 'bg-brand-50 text-brand-700 ring-brand-200',
-  green: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  amber: 'bg-amber-50 text-amber-800 ring-amber-200',
-  red: 'bg-red-50 text-red-700 ring-red-200',
+  slate: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 ring-slate-200 dark:ring-slate-700',
+  brand: 'bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 ring-brand-200 dark:ring-brand-800/60',
+  green: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-800/60',
+  amber: 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 ring-amber-200 dark:ring-amber-800/60',
+  red: 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 ring-red-200 dark:ring-red-800/60',
 } as const;
 
 export function Badge({
@@ -182,11 +178,11 @@ export function Alert({
   className?: string;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const tones = {
-    slate: 'bg-slate-50 text-slate-700 ring-slate-200',
-    brand: 'bg-brand-50 text-brand-800 ring-brand-200',
-    green: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-    amber: 'bg-amber-50 text-amber-900 ring-amber-200',
-    red: 'bg-red-50 text-red-800 ring-red-200',
+    slate: 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 ring-slate-200 dark:ring-slate-700',
+    brand: 'bg-brand-50 dark:bg-brand-950/60 text-brand-800 dark:text-brand-200 ring-brand-200 dark:ring-brand-800',
+    green: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 ring-emerald-200 dark:ring-emerald-800',
+    amber: 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-amber-200 dark:ring-amber-800',
+    red: 'bg-red-50 dark:bg-red-950/60 text-red-800 dark:text-red-200 ring-red-200 dark:ring-red-800',
   } as const;
   return (
     <div className={cn('rounded-md px-3.5 py-3 text-sm ring-1 ring-inset', tones[tone], className)} {...rest}>
@@ -206,9 +202,9 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-white/60 px-6 py-12 text-center">
-      <p className="text-sm font-medium text-slate-700">{title}</p>
-      {hint ? <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">{hint}</p> : null}
+    <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/60 px-6 py-12 text-center">
+      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{title}</p>
+      {hint ? <p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">{hint}</p> : null}
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
   );

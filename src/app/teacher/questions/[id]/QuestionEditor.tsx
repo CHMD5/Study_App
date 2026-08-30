@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
-import { CheckCircle2, ImagePlus, Plus, Trash2, X } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { CheckCircle2, ImagePlus, Plus, Trash2, Upload, X } from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -61,6 +61,7 @@ export function QuestionEditor({
   paper: Paper | null;
 }) {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [question, setQuestion] = useState(initialQuestion);
   const [fields, setFields] = useState<EditableFields>(() => toEditable(initialQuestion));
   const [images, setImages] = useState(initialImages);
@@ -81,9 +82,6 @@ export function QuestionEditor({
     setDirty(true);
   }
 
-  // Counts placeholders in the body AND every option's body — an unresolved
-  // image inside an option (e.g. a match-the-column diagram) must show up in
-  // this badge exactly like one in the body would.
   const imageTokens = useMemo(
     () => extractAllImageTokens(fields.body, fields.options.map((o) => o.body)),
     [fields.body, fields.options],
@@ -180,6 +178,27 @@ export function QuestionEditor({
     }
   }
 
+  async function onDirectFileUpload(placeholderId: string, file: File) {
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.set('placeholderId', placeholderId);
+      form.set('file', file);
+
+      const res = await fetch(`/api/questions/${question.id}/images`, { method: 'POST', body: form });
+      if (res.ok) {
+        const img = await res.json();
+        setImages((prev) => [...prev.filter((i) => i.placeholderId !== placeholderId), img]);
+        setArmedPlaceholder(null);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.message ?? 'Image upload failed.');
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function onDeleteImage(image: QuestionImage) {
     if (!confirm('Remove this cropped image? You will need to re-crop it.')) return;
     const res = await fetch(`/api/questions/${question.id}/images/${image.id}`, { method: 'DELETE' });
@@ -208,12 +227,12 @@ export function QuestionEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold text-slate-900">{question.humanCode ?? question.id}</h1>
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{question.humanCode ?? question.id}</h1>
             <Badge tone={question.status === 'verified' ? 'green' : question.status === 'archived' ? 'slate' : 'amber'}>
               {question.status}
             </Badge>
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             <Link href="/teacher/questions" className="hover:underline">
               ← Back to question bank
             </Link>
@@ -221,7 +240,7 @@ export function QuestionEditor({
         </div>
 
         <div className="flex items-center gap-2">
-          {dirty ? <span className="text-xs text-amber-600">Unsaved changes</span> : null}
+          {dirty ? <span className="text-xs text-amber-600 dark:text-amber-400">Unsaved changes</span> : null}
           <Button variant="secondary" onClick={onSave} disabled={saving || !dirty}>
             {saving ? 'Saving…' : 'Save'}
           </Button>
@@ -266,7 +285,7 @@ export function QuestionEditor({
       ) : null}
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
-        {/* Left: source PDF + crop tool */}
+        {/* Left: source PDF + crop tool OR direct image upload panel */}
         <div className="min-h-[320px]">
           {paper ? (
             <PdfCropViewer
@@ -276,15 +295,54 @@ export function QuestionEditor({
               onCrop={onCrop}
             />
           ) : (
-            <Card className="flex h-full items-center justify-center text-sm text-slate-400">
-              No source paper linked to this question.
+            <Card className="flex h-full flex-col items-center justify-center p-6 text-center">
+              <Upload className="size-10 text-slate-400 dark:text-slate-500" />
+              <h3 className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Standalone question</h3>
+              <p className="mt-1 max-w-sm text-xs text-slate-500 dark:text-slate-400">
+                No source PDF paper is linked. You can directly upload image files for any placeholder in this question.
+              </p>
+              {armedPlaceholder ? (
+                <div className="mt-4 w-full max-w-xs rounded-lg border border-accent-300 bg-accent-50 p-3 dark:border-accent-700 dark:bg-accent-950/40">
+                  <p className="text-xs font-semibold text-accent-900 dark:text-accent-200">
+                    Upload image for <span className="font-mono">[[IMG:{armedPlaceholder}]]</span>
+                  </p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="mt-2 block w-full text-xs text-slate-600 file:mr-2 file:rounded file:border-0 file:bg-brand-50 file:px-2.5 file:py-1 file:text-xs file:font-semibold file:text-brand-700 hover:file:bg-brand-100 dark:text-slate-300 dark:file:bg-brand-950/80 dark:file:text-brand-300"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file && armedPlaceholder) onDirectFileUpload(armedPlaceholder, file);
+                    }}
+                  />
+                  <Button size="sm" variant="ghost" className="mt-2 w-full" onClick={() => setArmedPlaceholder(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : null}
             </Card>
           )}
-          {armedPlaceholder ? (
-            <div className="mt-2 flex items-center justify-between rounded-md bg-accent-100 px-3 py-2 text-xs text-slate-800 ring-1 ring-inset ring-accent-400">
-              <span>
-                Drag a rectangle to resolve <span className="font-mono">[[IMG:{armedPlaceholder}]]</span>
-                {uploading ? ' — uploading…' : ''}
+
+          {paper && armedPlaceholder ? (
+            <div className="mt-2 flex items-center justify-between rounded-md bg-accent-100 px-3 py-2 text-xs text-slate-800 ring-1 ring-inset ring-accent-400 dark:bg-accent-950/80 dark:text-accent-100 dark:ring-accent-600">
+              <span className="flex items-center gap-2">
+                <span>
+                  Drag a rectangle on the PDF to crop <span className="font-mono font-semibold">[[IMG:{armedPlaceholder}]]</span>
+                  {uploading ? ' — uploading…' : ''}
+                </span>
+                <span className="text-slate-400">or</span>
+                <label className="cursor-pointer font-semibold text-brand-700 underline dark:text-brand-400">
+                  Upload file
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file && armedPlaceholder) onDirectFileUpload(armedPlaceholder, file);
+                    }}
+                  />
+                </label>
               </span>
               <button onClick={() => setArmedPlaceholder(null)} aria-label="Cancel crop">
                 <X className="size-3.5" />
@@ -317,7 +375,7 @@ export function QuestionEditor({
                 <ul className="mt-3 space-y-1.5 text-sm">
                   {fields.options.map((opt) => (
                     <li key={opt.key} className="flex gap-2">
-                      <span className="font-semibold text-slate-500">{opt.key}.</span>
+                      <span className="font-semibold text-slate-500 dark:text-slate-400">{opt.key}.</span>
                       <QuestionBody
                         body={opt.body}
                         renderImage={(placeholderId) => (
@@ -429,7 +487,7 @@ export function QuestionEditor({
           {images.length > 0 ? (
             <Card>
               <CardHeader>
-                <CardTitle>Cropped images</CardTitle>
+                <CardTitle>Cropped & uploaded images</CardTitle>
               </CardHeader>
               <CardBody className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {images.map((img) => (
@@ -439,16 +497,16 @@ export function QuestionEditor({
                       alt={img.altText ?? img.placeholderId}
                       width={160}
                       height={120}
-                      className="h-24 w-full rounded border border-slate-200 object-cover"
+                      className="h-24 w-full rounded border border-slate-200 bg-white object-cover dark:border-slate-700"
                       unoptimized
                     />
-                    <p className="mt-0.5 truncate text-[10px] text-slate-400">{img.placeholderId}</p>
+                    <p className="mt-0.5 truncate text-[10px] text-slate-400 dark:text-slate-500">{img.placeholderId}</p>
                     <button
                       onClick={() => onDeleteImage(img)}
-                      className="absolute right-1 top-1 rounded bg-white/90 p-1 opacity-0 ring-1 ring-slate-200 group-hover:opacity-100"
+                      className="absolute right-1 top-1 rounded bg-white/90 p-1 opacity-0 ring-1 ring-slate-200 group-hover:opacity-100 dark:bg-slate-800/90 dark:ring-slate-700"
                       aria-label={`Delete ${img.placeholderId}`}
                     >
-                      <Trash2 className="size-3 text-red-600" />
+                      <Trash2 className="size-3 text-red-600 dark:text-red-400" />
                     </button>
                   </div>
                 ))}
@@ -483,7 +541,9 @@ function ImageChip({
           width={160}
           height={100}
           unoptimized
-          className={`inline-block max-h-28 w-auto rounded border object-contain ${armed ? 'border-accent-500 ring-2 ring-accent-400' : 'border-slate-200'}`}
+          className={`inline-block max-h-28 w-auto rounded border bg-white object-contain dark:bg-slate-900 ${
+            armed ? 'border-accent-500 ring-2 ring-accent-400' : 'border-slate-200 dark:border-slate-700'
+          }`}
         />
       </button>
     );
@@ -492,7 +552,9 @@ function ImageChip({
     <button
       onClick={onClick}
       className={`mx-0.5 inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 align-middle text-xs font-medium ${
-        armed ? 'border-accent-500 bg-accent-100 text-accent-700' : 'border-amber-400 bg-amber-50 text-amber-700'
+        armed
+          ? 'border-accent-500 bg-accent-100 text-accent-700 dark:bg-accent-950 dark:text-accent-300'
+          : 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
       }`}
     >
       <ImagePlus className="size-3" aria-hidden />
@@ -523,7 +585,7 @@ function OptionsEditor({ options, onChange }: { options: QuestionOption[]; onCha
           const opt = options.find((o) => o.key === key);
           return (
             <div key={key} className="flex items-start gap-2">
-              <span className="mt-2 w-4 shrink-0 text-sm font-semibold text-slate-500">{key}</span>
+              <span className="mt-2 w-4 shrink-0 text-sm font-semibold text-slate-500 dark:text-slate-400">{key}</span>
               <Textarea
                 value={opt?.body ?? ''}
                 onChange={(e) => setBody(key, e.target.value)}
@@ -531,11 +593,11 @@ function OptionsEditor({ options, onChange }: { options: QuestionOption[]; onCha
                 className="font-mono text-xs"
               />
               {opt ? (
-                <button onClick={() => remove(key)} className="mt-2 shrink-0 text-slate-400 hover:text-red-600" aria-label={`Remove option ${key}`}>
+                <button onClick={() => remove(key)} className="mt-2 shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400" aria-label={`Remove option ${key}`}>
                   <Trash2 className="size-3.5" />
                 </button>
               ) : (
-                <button onClick={() => setBody(key, '')} className="mt-2 shrink-0 text-slate-400 hover:text-brand-600" aria-label={`Add option ${key}`}>
+                <button onClick={() => setBody(key, '')} className="mt-2 shrink-0 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400" aria-label={`Add option ${key}`}>
                   <Plus className="size-3.5" />
                 </button>
               )}
@@ -582,11 +644,11 @@ function AnswerEditor({
         ) : (
           <>
             <div className="flex gap-4 text-sm">
-              <label className="flex items-center gap-1.5">
+              <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
                 <input type="radio" checked={mode === 'exact'} onChange={() => { setMode('exact'); onChange(null); }} />
                 Exact value
               </label>
-              <label className="flex items-center gap-1.5">
+              <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
                 <input type="radio" checked={mode === 'range'} onChange={() => { setMode('range'); onChange(null); }} />
                 Tolerance range
               </label>
