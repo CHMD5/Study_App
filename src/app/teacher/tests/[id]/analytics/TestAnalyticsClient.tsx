@@ -6,28 +6,15 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import {
-  AlertTriangle,
-  ArrowLeft,
-  Award,
-  CheckCircle2,
-  Clock,
   Download,
-  Eye,
-  FileSpreadsheet,
-  HelpCircle,
-  Sparkles,
-  TrendingUp,
-  Users,
 } from 'lucide-react';
-import { Alert, Badge, Button, buttonClass, Card, CardBody, CardHeader, CardTitle, Spinner } from '@/components/ui';
+import { Alert, Badge, buttonClass, Card, CardBody, CardHeader, CardTitle, Spinner } from '@/components/ui';
 
 type TestAnalyticsData = {
   testId: string;

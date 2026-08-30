@@ -1,13 +1,16 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { requireSession } from '@/lib/auth';
+import { apiSession } from '@/lib/auth';
 import { HttpError, json, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
 import { attemptAnswers, attempts, questions, testQuestions, tests, type QuestionOption } from '@/db/schema';
+import { isGradeableResponse } from '@/lib/grading';
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = withApi<Ctx>(async (req, { params }) => {
-  const session = await requireSession();
+  // apiSession, not requireSession — the latter redirects, which withApi turns
+  // into a 500 rather than a 401.
+  const session = await apiSession();
   const { id: attemptId } = await params;
   const db = await getDb();
 
@@ -121,17 +124,16 @@ export const GET = withApi<Ctx>(async (req, { params }) => {
 
     const marksAwarded = ans?.marksAwarded ? Number(ans.marksAwarded) : 0;
     const isCorrect = ans?.isCorrect ?? null;
-    const isAttempted = ans?.response !== null && ans?.response !== undefined;
+    // Shared with the grader so a non-numeric entry in a numerical box can't be
+    // scored as unattempted while being summarised as wrong.
+    const isAttempted = isGradeableResponse(q.type, ans?.response);
     const timeSpentMs = ans?.timeSpentMs ?? 0;
     const expectedTimeS = q.expectedTimeS ?? 120;
     const isOvertime = timeSpentMs > expectedTimeS * 1.5 * 1000;
 
-    if (isAttempted) {
-      if (isCorrect) correctCount++;
-      else wrongCount++;
-    } else {
-      unattemptedCount++;
-    }
+    if (isAttempted && isCorrect === true) correctCount++;
+    else if (isAttempted && isCorrect === false) wrongCount++;
+    else unattemptedCount++;
 
     if (subjectScores[q.subject]) {
       subjectScores[q.subject].marks += marksAwarded;

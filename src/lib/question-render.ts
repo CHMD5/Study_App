@@ -36,13 +36,22 @@ export function parseBody(body: string): BodySegment[] {
   const segments: BodySegment[] = [];
   // Order matters: $$...$$ must be tried before a lone $...$ would otherwise
   // greedily split it in half.
-  const tokenRe = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\[\[IMG:[^\]]+\]\])/g;
+  //
+  // The `(?<!\\)` lookbehinds make an escaped `\$` a literal dollar sign, which
+  // is what the ingest validator has always assumed (it counts unescaped `$` to
+  // detect an unclosed delimiter). Without them the two disagreed: a body the
+  // validator accepted as having balanced delimiters could still be split into
+  // broken math here, and a price like "\$5" opened a math run.
+  const tokenRe = /((?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$[^$\n]+?(?<!\\)\$|\[\[IMG:[^\]]+\]\])/g;
+
+  /** `\$` is a literal dollar once we are no longer scanning for delimiters. */
+  const unescape = (text: string) => text.replace(/\\\$/g, '$');
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = tokenRe.exec(body))) {
     if (match.index > lastIndex) {
-      segments.push({ kind: 'text', text: body.slice(lastIndex, match.index) });
+      segments.push({ kind: 'text', text: unescape(body.slice(lastIndex, match.index)) });
     }
     const token = match[0];
     if (token.startsWith('[[IMG:')) {
@@ -55,7 +64,7 @@ export function parseBody(body: string): BodySegment[] {
     lastIndex = tokenRe.lastIndex;
   }
   if (lastIndex < body.length) {
-    segments.push({ kind: 'text', text: body.slice(lastIndex) });
+    segments.push({ kind: 'text', text: unescape(body.slice(lastIndex)) });
   }
   return segments;
 }

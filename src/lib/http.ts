@@ -71,11 +71,29 @@ export function json(data: unknown, status = 200): NextResponse {
  * instead of a bare 500.
  */
 export function isForeignKeyViolation(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'cause' in err &&
-    typeof (err as { cause?: unknown }).cause === 'object' &&
-    (err as { cause?: { code?: unknown } }).cause?.code === '23503'
-  );
+  return pgErrorCode(err) === '23503';
+}
+
+/**
+ * Postgres error code 23505 = unique_violation. Turns a raw constraint failure
+ * (re-ingesting a paper whose `human_code`s already exist; two tabs racing to
+ * allocate the same `attempt_no`) into a specific 409 instead of a bare 500.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  return pgErrorCode(err) === '23505';
+}
+
+/**
+ * drizzle-orm/pglite wraps the driver error as `{ query, params, cause: {...} }`,
+ * so the SQLSTATE lives on `.cause`, not on the error itself.
+ */
+function pgErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const cause = (err as { cause?: unknown }).cause;
+  if (typeof cause === 'object' && cause !== null) {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+  }
+  const own = (err as { code?: unknown }).code;
+  return typeof own === 'string' ? own : undefined;
 }

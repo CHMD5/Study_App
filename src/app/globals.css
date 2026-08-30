@@ -3,20 +3,35 @@
 
 @variant dark (&:where(.dark, .dark *));
 
+/* Full 50→950 ramps. Tailwind v4 emits NO utility for an undefined token, so a
+   gap here means `dark:text-brand-400` silently renders as nothing at all —
+   which is exactly how the dark-mode brand accents came to be invisible. Every
+   step referenced anywhere in src/ must exist here; scripts/check-tokens.mjs
+   enforces that on every dev/build. */
 @theme {
   --color-brand-50: #eef2ff;
   --color-brand-100: #e0e7ff;
   --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #7c93f0;
   --color-brand-500: #3b5bdb;
   --color-brand-600: #2a44b8;
   --color-brand-700: #1e3a8a;
   --color-brand-800: #172e6e;
   --color-brand-900: #101f4a;
+  --color-brand-950: #0a1430;
 
+  --color-accent-50: #fffbeb;
   --color-accent-100: #fef3c7;
+  --color-accent-200: #fde68a;
+  --color-accent-300: #fcd34d;
   --color-accent-400: #fbbf24;
   --color-accent-500: #f59e0b;
   --color-accent-600: #d97706;
+  --color-accent-700: #b45309;
+  --color-accent-800: #92400e;
+  --color-accent-900: #78350f;
+  --color-accent-950: #451a03;
 
   --font-sans: 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
   --font-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, ui-monospace, monospace;
@@ -25,6 +40,25 @@
 html,
 body {
   height: 100%;
+}
+
+/* The AppShell header height, in one place. Full-height panes (exam runner,
+   question editor, verify studio) each used to hardcode their own guess at it
+   in a `h-[calc(100vh-Nrem)]`, and all three guesses differed. */
+:root {
+  --app-header-h: 3.5rem;
+}
+@media (max-width: 767px) {
+  /* the nav collapses to a second scrollable strip below md */
+  :root {
+    --app-header-h: 6rem;
+  }
+}
+
+/* Digits that don't reflow as they change — the exam countdown, marks, ranks
+   and every numeric table column. */
+.tnum {
+  font-variant-numeric: tabular-nums;
 }
 
 body {
@@ -82,6 +116,17 @@ html.dark .q-render :is(th) {
   outline: 2px solid var(--color-brand-500);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media print {

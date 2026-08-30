@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseIngestJson, repairJsonString } from './json-repair';
+import { parseIngestJson } from './json-repair';
 import { IngestPayload } from './zod/ingest';
 
 describe('json-repair', () => {

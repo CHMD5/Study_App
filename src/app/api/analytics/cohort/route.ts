@@ -1,8 +1,8 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { apiTeacher } from '@/lib/auth';
 import { json, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
-import { attemptAnswers, attempts, profiles, questions, tests } from '@/db/schema';
+import { attempts, profiles, tests } from '@/db/schema';
 
 export const GET = withApi(async () => {
   await apiTeacher();

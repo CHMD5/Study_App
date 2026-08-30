@@ -82,12 +82,40 @@ export const PATCH = withApi<Ctx>(async (req, { params }) => {
   const [existing] = await db.select().from(tests).where(eq(tests.id, id));
   if (!existing) throw new HttpError(404, 'not_found', 'Test not found');
 
+  // Settings that change how an attempt is scored or timed cannot be edited
+  // once students have sat the test — attempts materialise their own deadline
+  // and question order at start, so changing these afterwards silently
+  // desynchronises live and historical attempts from the test they belong to.
+  const FROZEN_AFTER_ATTEMPTS = ['durationS', 'maxAttempts', 'shuffleQuestions', 'shuffleOptions'] as const;
+  const touchedFrozen = FROZEN_AFTER_ATTEMPTS.filter((k) => k in parsed.data && parsed.data[k] !== existing[k]);
+
+  if (touchedFrozen.length > 0) {
+    const [{ attemptCount }] = await db
+      .select({ attemptCount: sql<number>`cast(count(*) as int)` })
+      .from(attempts)
+      .where(eq(attempts.testId, id));
+
+    if (attemptCount > 0) {
+      throw new HttpError(
+        409,
+        'test_in_use',
+        `This test already has ${attemptCount} student attempt(s), so ${touchedFrozen.join(', ')} can no longer be changed. Title, description, window and results policy are still editable.`,
+        { attemptCount, frozen: touchedFrozen },
+      );
+    }
+  }
+
   const updateData: Record<string, unknown> = { ...parsed.data };
   if ('opensAt' in parsed.data) {
     updateData.opensAt = parsed.data.opensAt ? new Date(parsed.data.opensAt) : null;
   }
   if ('closesAt' in parsed.data) {
     updateData.closesAt = parsed.data.closesAt ? new Date(parsed.data.closesAt) : null;
+  }
+
+  // Switching back to 'immediate' should not leave a stale release stamp behind.
+  if (parsed.data.resultsPolicy === 'immediate') {
+    updateData.releasedAt = null;
   }
 
   const [updated] = await db.update(tests).set(updateData).where(eq(tests.id, id)).returning();

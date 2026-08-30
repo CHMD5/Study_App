@@ -4,17 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy-pdf-worker.mjs",
+    "predev": "node scripts/copy-pdf-worker.mjs && node scripts/check-tokens.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/copy-pdf-worker.mjs",
+    "prebuild": "node scripts/copy-pdf-worker.mjs && node scripts/check-tokens.mjs",
     "build": "next build",
     "start": "next start",
     "seed": "tsx scripts/seed.ts",
     "backup": "tsx scripts/backup.ts",
     "restore": "tsx scripts/restore.ts",
     "reset": "tsx scripts/reset.ts",
+    "regrade": "tsx scripts/regrade.ts",
+    "lint": "eslint .",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "check-tokens": "node scripts/check-tokens.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run check-tokens && npm run test"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.11",
@@ -34,15 +38,20 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.3.3",
     "@tailwindcss/postcss": "^4.1.14",
     "@types/katex": "^0.16.7",
     "@types/node": "^22.18.8",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.1",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.68.0",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.4"
   }

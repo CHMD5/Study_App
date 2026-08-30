@@ -131,19 +131,20 @@ export function IngestView({
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="space-y-4">
         <Card>
-          <button
-            className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left"
-            onClick={() => setPromptOpen((v) => !v)}
-            aria-expanded={promptOpen}
-          >
-            <span className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+          {/* Sibling, not nested: a <button> inside a <button> is invalid HTML
+              and leaves the copy control unreachable by keyboard. */}
+          <div className="flex w-full items-center justify-between gap-2 px-5 py-3">
+            <button
+              type="button"
+              className="flex flex-1 items-center gap-2 text-left text-sm font-semibold text-slate-900 dark:text-slate-100"
+              onClick={() => setPromptOpen((v) => !v)}
+              aria-expanded={promptOpen}
+            >
               {promptOpen ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
               Extraction prompt ({activePrompt?.version ?? 'none found'})
-            </span>
-            <span onClick={(e) => e.stopPropagation()}>
-              {activePrompt ? <CopyButton text={activePrompt.text} size="sm" /> : null}
-            </span>
-          </button>
+            </button>
+            {activePrompt ? <CopyButton text={activePrompt.text} size="sm" /> : null}
+          </div>
           {promptOpen && activePrompt ? (
             <CardBody className="border-t border-slate-200 pt-3 dark:border-slate-800">
               <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-800 ring-1 ring-inset ring-slate-200 dark:bg-slate-950 dark:text-slate-200 dark:ring-slate-800">

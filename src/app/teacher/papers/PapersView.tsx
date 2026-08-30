@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
-import { CheckCircle2, Columns2, FileText, Trash2, UploadCloud } from 'lucide-react';
+import { Columns2, FileText, Trash2, UploadCloud } from 'lucide-react';
 import { Alert, Badge, Button, buttonClass, Card, CardBody, EmptyState, Input, Label, Spinner } from '@/components/ui';
 import type { Paper } from '@/db/schema';
 
@@ -47,7 +47,12 @@ export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
   return (
     <div className="space-y-5">
       {showForm ? (
-        <UploadForm onCreated={onCreated} onCancel={() => papers.length > 0 && setShowForm(false)} />
+        // Cancel is only offered when there is a list to go back to. It used to
+        // render unconditionally and silently do nothing when papers was empty.
+        <UploadForm
+          onCreated={onCreated}
+          onCancel={papers.length > 0 ? () => setShowForm(false) : undefined}
+        />
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Button onClick={() => setShowForm(true)}>
@@ -125,7 +130,7 @@ export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
   );
 }
 
-function UploadForm({ onCreated, onCancel }: { onCreated: (p: Paper) => void; onCancel: () => void }) {
+function UploadForm({ onCreated, onCancel }: { onCreated: (p: Paper) => void; onCancel?: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState('');
   const [examYear, setExamYear] = useState('');
@@ -217,9 +222,11 @@ function UploadForm({ onCreated, onCancel }: { onCreated: (p: Paper) => void; on
                 'Register paper'
               )}
             </Button>
-            <Button type="button" variant="ghost" onClick={onCancel}>
-              Cancel
-            </Button>
+            {onCancel ? (
+              <Button type="button" variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
+            ) : null}
           </div>
         </form>
       </CardBody>

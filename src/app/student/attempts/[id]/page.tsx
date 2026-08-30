@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { requireStudent } from '@/lib/auth';
 import { getDb } from '@/db/client';
 import { attempts, tests } from '@/db/schema';
@@ -35,14 +35,17 @@ export default async function TestRunnerPage({
 
   if (!attempt) notFound();
 
+  // Ownership FIRST. This used to run after the redirect below, so Student B
+  // opening Student A's submitted-attempt URL was bounced to A's result URL —
+  // harmless in the end (that route re-checks), but it leaked the fact that the
+  // attempt exists and had been submitted.
+  if (attempt.studentId !== session.userId) {
+    notFound();
+  }
+
   // If already submitted, redirect to result screen
   if (attempt.status !== 'in_progress') {
     redirect(`/student/attempts/${attemptId}/result`);
-  }
-
-  // Verify student ownership
-  if (attempt.studentId !== session.userId) {
-    notFound();
   }
 
   return (

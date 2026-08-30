@@ -5,30 +5,19 @@ import { useRouter } from 'next/navigation';
 import { get, set } from 'idb-keyval';
 import {
   AlertTriangle,
-  Award,
-  BookOpen,
   Check,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
-  ExternalLink,
-  Eye,
   Flag,
-  HelpCircle,
   Layers,
   Maximize2,
   Minimize2,
-  RotateCcw,
-  Save,
-  Send,
-  Sparkles,
-  Wifi,
   WifiOff,
   X,
 } from 'lucide-react';
-import { Alert, Badge, Button, buttonClass, Card, CardBody, Spinner } from '@/components/ui';
-import { KatexSpan, QuestionBody } from '@/components/Katex';
+import { Alert, Button, Card, CardBody, Spinner } from '@/components/ui';
+import { QuestionBody } from '@/components/Katex';
 import type { StudentQuestionDto } from '@/lib/dto';
 
 export type AnswerState =
@@ -43,7 +32,76 @@ export type QuestionRuntimeState = StudentQuestionDto & {
   response: { key?: string; value?: number | string } | null;
   timeSpentMs: number;
   visitCount: number;
+  /**
+   * Local-only text for a numerical box mid-typing ("-", "3."), so a partially
+   * entered number stays editable without being stored as a response. Never
+   * sent to the server.
+   */
+  draftValue?: string;
 };
+
+/**
+ * One cell of the question palette.
+ *
+ * Was duplicated between the desktop aside and the mobile sheet, which had
+ * already drifted apart in sizing and hover states. State was conveyed by
+ * background colour alone — indistinguishable for a red/green colour-blind
+ * student, and unreadable to a screen reader — so each cell now also carries a
+ * glyph and a spoken label.
+ */
+const STATE_LABEL: Record<AnswerState, string> = {
+  not_seen: 'not visited',
+  seen_unanswered: 'not answered',
+  answered: 'answered',
+  answered_flagged: 'answered and marked for review',
+  flagged_unanswered: 'marked for review',
+};
+
+function PaletteButton({
+  question,
+  isCurrent,
+  onClick,
+}: {
+  question: QuestionRuntimeState;
+  isCurrent: boolean;
+  onClick: () => void;
+}) {
+  const styles: Record<AnswerState, string> = {
+    not_seen: 'bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
+    seen_unanswered: 'bg-red-600 text-white hover:bg-red-700',
+    answered: 'bg-emerald-600 text-white hover:bg-emerald-700',
+    flagged_unanswered: 'bg-purple-700 text-white hover:bg-purple-800',
+    answered_flagged: 'bg-purple-700 text-white hover:bg-purple-800',
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Question ${question.position}, ${STATE_LABEL[question.state]}`}
+      aria-current={isCurrent ? 'true' : undefined}
+      className={`tnum relative flex size-9 items-center justify-center rounded-md text-xs font-bold transition-all ${
+        styles[question.state]
+      } ${isCurrent ? 'scale-105 ring-2 ring-brand-500 ring-offset-2 dark:ring-offset-slate-900' : ''}`}
+    >
+      {question.position}
+
+      {/* Non-colour state cues */}
+      {question.state === 'answered' && (
+        <Check className="absolute -right-1 -top-1 size-3 rounded-full bg-white p-px text-emerald-700" aria-hidden />
+      )}
+      {(question.state === 'answered_flagged' || question.state === 'flagged_unanswered') && (
+        <Flag className="absolute -left-1 -top-1 size-3 rounded-full bg-white p-px text-purple-700" aria-hidden />
+      )}
+      {question.state === 'answered_flagged' && (
+        <span
+          className="absolute -bottom-1 -right-1 size-3 rounded-full border-2 border-white bg-emerald-500"
+          aria-hidden
+        />
+      )}
+    </button>
+  );
+}
 
 export function TestRunnerClient({
   attemptId,
@@ -64,13 +122,19 @@ export function TestRunnerClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Online / Offline & Sync status
-  const [isOnline, setIsOnline] = useState(true);
+  // Online / Offline & Sync status.
+  // Initialised from navigator so a student who loads the page already offline
+  // sees the indicator immediately rather than a false "online".
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  );
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [mobilePaletteOpen, setMobilePaletteOpen] = useState(false);
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Timer state
@@ -79,14 +143,40 @@ export function TestRunnerClient({
 
   // Active question timing tracking
   const activeSinceRef = useRef<number>(performance.now());
-  const pendingSyncRef = useRef<boolean>(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * A live mirror of `questions` for callbacks that must not be re-created when
+   * it changes.
+   *
+   * Two separate bugs came from reading `questions` out of a closure:
+   *   - the 1s countdown effect captured the FIRST render's auto-submit, whose
+   *     `questions` was `[]` and whose `submitting` was permanently `false`, so
+   *     on expiry it re-fired every second and flushed an empty answer array;
+   *   - `syncWithServer` changed identity on every keystroke, which tore down
+   *     and restarted the 15s heartbeat effect each time — for a student who
+   *     was actively working, the heartbeat never actually fired.
+   */
+  const questionsRef = useRef<QuestionRuntimeState[]>([]);
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
+
+  /** Guards auto-submit against re-entry. A ref, because the countdown callback
+   *  cannot see state updates. */
+  const submitStartedRef = useRef(false);
 
   const currentQ = questions[currentIndex];
 
-  // Subject tabs
-  const subjects = ['physics', 'chemistry', 'maths'] as const;
-  const currentSubject = currentQ?.subject ?? 'physics';
+  // Subject tabs are derived from the paper, not hardcoded — a Physics-only
+  // sectional test used to render two dead tabs reading 0/0.
+  const subjects = useMemo(() => {
+    const order = ['physics', 'chemistry', 'maths'] as const;
+    const present = new Set(questions.map((q) => q.subject));
+    return order.filter((s) => present.has(s));
+  }, [questions]);
+
+  const currentSubject = currentQ?.subject ?? subjects[0] ?? 'physics';
 
   // IDB Storage key for offline mirror
   const idbKey = `vtp_attempt_${attemptId}`;
@@ -144,29 +234,15 @@ export function TestRunnerClient({
     };
   }, [attemptId, idbKey]);
 
-  // 2. Countdown Timer
-  useEffect(() => {
-    const targetTime = new Date(deadlineAt).getTime();
-
-    const updateTimer = () => {
-      const adjustedNow = Date.now() - clockOffsetRef.current;
-      const diff = Math.max(0, Math.floor((targetTime - adjustedNow) / 1000));
-      setRemainingSeconds(diff);
-
-      if (diff <= 0) {
-        // Auto-submit when timer expires
-        handleAutoSubmit();
-      }
-    };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [deadlineAt]);
-
   // 3. Precision timing per question accumulation
+  const currentIndexRef = useRef(0);
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
   const flushTimeSpent = useCallback(() => {
-    if (!questions[currentIndex]) return;
+    const idx = currentIndexRef.current;
+    if (!questionsRef.current[idx]) return;
     const now = performance.now();
     const delta = Math.round(now - activeSinceRef.current);
     activeSinceRef.current = now;
@@ -174,16 +250,13 @@ export function TestRunnerClient({
     if (delta > 0) {
       setQuestions((prev) => {
         const copy = [...prev];
-        if (copy[currentIndex]) {
-          copy[currentIndex] = {
-            ...copy[currentIndex],
-            timeSpentMs: (copy[currentIndex].timeSpentMs ?? 0) + delta,
-          };
+        if (copy[idx]) {
+          copy[idx] = { ...copy[idx], timeSpentMs: (copy[idx].timeSpentMs ?? 0) + delta };
         }
         return copy;
       });
     }
-  }, [currentIndex, questions]);
+  }, []);
 
   // 4. Mirror to IndexedDB whenever questions state changes
   useEffect(() => {
@@ -199,58 +272,68 @@ export function TestRunnerClient({
     set(idbKey, cacheMap).catch(() => {});
   }, [questions, idbKey]);
 
-  // 5. Server Autosave Dispatcher
+  /** The wire payload, always read from the ref so it is never stale. */
+  const buildAnswersPayload = useCallback(
+    () => ({
+      answers: questionsRef.current.map((q) => ({
+        questionId: q.id,
+        response: q.response,
+        state: q.state,
+        timeSpentMs: q.timeSpentMs,
+        visitCount: q.visitCount,
+      })),
+    }),
+    [],
+  );
+
+  // 5. Server Autosave Dispatcher.
+  // Stable identity (no `questions` dependency) so the heartbeat and listener
+  // effects below mount exactly once.
   const syncWithServer = useCallback(async () => {
-    if (questions.length === 0 || !navigator.onLine) return;
+    if (questionsRef.current.length === 0 || !navigator.onLine) return;
     setIsSyncing(true);
-    setSyncError(null);
 
     flushTimeSpent();
 
     try {
-      const payload = {
-        answers: questions.map((q) => ({
-          questionId: q.id,
-          response: q.response,
-          state: q.state,
-          timeSpentMs: q.timeSpentMs,
-          visitCount: q.visitCount,
-        })),
-      };
-
       const res = await fetch(`/api/attempts/${attemptId}/answers`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildAnswersPayload()),
       });
 
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (res.status === 403 && data.error === 'attempt_expired') {
           router.push(`/student/attempts/${attemptId}/result`);
+          return;
+        }
+        if (res.status === 401) {
+          setSyncError('Signed out — your answers are saved on this device. Sign in again in another tab.');
           return;
         }
         throw new Error(data?.message || 'Sync failed');
       }
 
-      pendingSyncRef.current = false;
-    } catch (err: any) {
-      setSyncError('Sync paused (saved locally)');
+      setSyncError(null);
+      setLastSavedAt(Date.now());
+    } catch {
+      setSyncError('Not saved to the server — your answers are safe on this device and will re-sync.');
     } finally {
       setIsSyncing(false);
     }
-  }, [attemptId, flushTimeSpent, questions, router]);
+  }, [attemptId, buildAnswersPayload, flushTimeSpent, router]);
 
   // Debounced auto-sync when questions state updates
   const scheduleSync = useCallback(() => {
-    pendingSyncRef.current = true;
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       syncWithServer();
     }, 300);
   }, [syncWithServer]);
 
-  // 6. Periodic Heartbeat Sync (every 15s)
+  // 6. Periodic Heartbeat Sync (every 15s). Mounts once, because
+  // syncWithServer's identity is now stable.
   useEffect(() => {
     const heartbeat = setInterval(() => {
       syncWithServer();
@@ -288,40 +371,49 @@ export function TestRunnerClient({
       }
     };
 
-    const handleBeforeUnload = () => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       flushTimeSpent();
-      const payload = JSON.stringify({
-        answers: questions.map((q) => ({
-          questionId: q.id,
-          response: q.response,
-          state: q.state,
-          timeSpentMs: q.timeSpentMs,
-        })),
-      });
-      navigator.sendBeacon(`/api/attempts/${attemptId}/answers`, payload);
+
+      // sendBeacon can only issue POST, and always labels the body
+      // text/plain — this used to target a PATCH-only route and 405 on every
+      // unload, silently, because a beacon has no readable response. The route
+      // now also exports POST and parses the body as text.
+      const blob = new Blob([JSON.stringify(buildAnswersPayload())], { type: 'text/plain;charset=UTF-8' });
+      navigator.sendBeacon(`/api/attempts/${attemptId}/answers`, blob);
+
+      // An accidental Ctrl+W used to end the attempt with no warning.
+      if (!submitStartedRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
     };
+
+    // Esc leaves fullscreen without going through our toggle, which left the
+    // button showing the wrong icon.
+    const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [attemptId, flushTimeSpent, questions, syncWithServer]);
+  }, [attemptId, buildAnswersPayload, flushTimeSpent, syncWithServer]);
 
-  // Toggle Fullscreen
+  // Toggle Fullscreen. `isFullscreen` is driven by the fullscreenchange
+  // listener above rather than set optimistically here.
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
     } else {
       document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
     }
   };
 
@@ -334,8 +426,14 @@ export function TestRunnerClient({
     setQuestions((prev) => {
       const copy = [...prev];
       const target = copy[targetIndex];
-      if (target && target.state === 'not_seen') {
-        copy[targetIndex] = { ...target, state: 'seen_unanswered' };
+      if (target) {
+        // visitCount was plumbed through the schema, the DTO, the PATCH handler
+        // and the client payload, and incremented nowhere — it was always 0.
+        copy[targetIndex] = {
+          ...target,
+          visitCount: (target.visitCount ?? 0) + 1,
+          state: target.state === 'not_seen' ? 'seen_unanswered' : target.state,
+        };
       }
       return copy;
     });
@@ -361,16 +459,32 @@ export function TestRunnerClient({
     scheduleSync();
   };
 
-  // Action: Set Integer Value
+  /**
+   * Accepts only what the grader can actually score: an optional leading minus,
+   * digits, and at most one decimal point.
+   *
+   * The field used to be a bare text input, so `abc` was storable — and it then
+   * disagreed with itself downstream, scoring as unattempted but being
+   * summarised on the scorecard as a wrong answer. Rejecting the keystroke is
+   * clearer than accepting it and explaining later.
+   */
   const handleSetIntegerValue = (val: string) => {
+    const trimmed = val.trim();
+    if (trimmed !== '' && !/^-?\d*\.?\d*$/.test(trimmed)) return;
+
     setQuestions((prev) => {
       const copy = [...prev];
       const q = copy[currentIndex];
       if (q) {
-        const num = val.trim() === '' ? undefined : Number(val);
+        // Keep partial input ("-", "3.") as a string so the box stays editable;
+        // it is stored as null until it parses, so a half-typed number is never
+        // graded as an attempt.
+        const num = Number(trimmed);
+        const complete = trimmed !== '' && Number.isFinite(num);
         copy[currentIndex] = {
           ...q,
-          response: val.trim() === '' ? null : { value: Number.isNaN(num) ? val : num },
+          response: complete ? { value: num } : null,
+          draftValue: trimmed,
         };
       }
       return copy;
@@ -437,6 +551,7 @@ export function TestRunnerClient({
         copy[currentIndex] = {
           ...q,
           response: null,
+          draftValue: undefined,
           state: nextState,
         };
       }
@@ -453,64 +568,74 @@ export function TestRunnerClient({
     }
   };
 
-  // Auto-Submit Handler
-  const handleAutoSubmit = async () => {
-    if (submitting) return;
-    setSubmitting(true);
-    flushTimeSpent();
+  /**
+   * Flush answers, then close the attempt.
+   *
+   * Guarded by a ref rather than the `submitting` state: the countdown effect
+   * calls this from an interval whose closure cannot observe a state update, so
+   * the old `if (submitting) return` never tripped and expiry re-fired the whole
+   * submit sequence once per second. The final flush also reads answers from
+   * the ref — it used to send the first render's empty array, discarding
+   * everything since the last successful heartbeat.
+   */
+  const closeAttempt = useCallback(
+    async (mode: 'auto' | 'manual') => {
+      if (submitStartedRef.current) return;
+      submitStartedRef.current = true;
+      setSubmitting(true);
+      flushTimeSpent();
 
-    try {
-      // Final flush
-      await fetch(`/api/attempts/${attemptId}/answers`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          answers: questions.map((q) => ({
-            questionId: q.id,
-            response: q.response,
-            state: q.state,
-            timeSpentMs: q.timeSpentMs,
-          })),
-        }),
-      }).catch(() => {});
+      try {
+        await fetch(`/api/attempts/${attemptId}/answers`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildAnswersPayload()),
+        }).catch(() => {});
 
-      const res = await fetch(`/api/attempts/${attemptId}/submit`, { method: 'POST' });
-      const data = await res.json();
-      router.push(`/student/attempts/${attemptId}/result`);
-    } catch (err) {
-      router.push(`/student/attempts/${attemptId}/result`);
-    }
-  };
+        const res = await fetch(`/api/attempts/${attemptId}/submit`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
 
-  // Manual Submit
-  const handleFinalSubmit = async () => {
-    setSubmitting(true);
-    flushTimeSpent();
+        // On expiry we always land on the result page — the server has closed
+        // the attempt either way, and stranding the student on a dead exam
+        // screen would be worse than a result page that explains itself.
+        if (!res.ok && mode === 'manual') {
+          throw new Error(data?.message || 'Failed to submit test');
+        }
 
-    try {
-      await fetch(`/api/attempts/${attemptId}/answers`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          answers: questions.map((q) => ({
-            questionId: q.id,
-            response: q.response,
-            state: q.state,
-            timeSpentMs: q.timeSpentMs,
-          })),
-        }),
-      }).catch(() => {});
+        router.push(`/student/attempts/${attemptId}/result`);
+      } catch (err) {
+        if (mode === 'auto') {
+          router.push(`/student/attempts/${attemptId}/result`);
+          return;
+        }
+        setSubmitError(err instanceof Error ? err.message : 'Failed to submit test');
+        submitStartedRef.current = false;
+        setSubmitting(false);
+      }
+    },
+    [attemptId, buildAnswersPayload, flushTimeSpent, router],
+  );
 
-      const res = await fetch(`/api/attempts/${attemptId}/submit`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || 'Failed to submit test');
+  // 2. Countdown Timer. Depends on closeAttempt (stable), so the interval is
+  // never re-created with a stale copy of it.
+  useEffect(() => {
+    const targetTime = new Date(deadlineAt).getTime();
 
-      router.push(`/student/attempts/${attemptId}/result`);
-    } catch (err: any) {
-      alert(err.message);
-      setSubmitting(false);
-    }
-  };
+    const updateTimer = () => {
+      const adjustedNow = Date.now() - clockOffsetRef.current;
+      const diff = Math.max(0, Math.floor((targetTime - adjustedNow) / 1000));
+      setRemainingSeconds(diff);
+
+      if (diff <= 0) {
+        clearInterval(interval);
+        void closeAttempt('auto');
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [deadlineAt, closeAttempt]);
 
   // Summary counts
   const paletteStats = useMemo(() => {
@@ -531,19 +656,14 @@ export function TestRunnerClient({
     return { answered, notAnswered, notVisited, markedForReview, answeredMarked };
   }, [questions]);
 
+  // Derived from the questions actually present, so a single-subject paper
+  // doesn't report totals for subjects it doesn't contain.
   const subjectCounts = useMemo(() => {
-    const stats: Record<string, { total: number; answered: number }> = {
-      physics: { total: 0, answered: 0 },
-      chemistry: { total: 0, answered: 0 },
-      maths: { total: 0, answered: 0 },
-    };
+    const stats: Record<string, { total: number; answered: number }> = {};
     for (const q of questions) {
-      if (stats[q.subject]) {
-        stats[q.subject].total++;
-        if (q.state === 'answered' || q.state === 'answered_flagged') {
-          stats[q.subject].answered++;
-        }
-      }
+      const entry = (stats[q.subject] ??= { total: 0, answered: 0 });
+      entry.total++;
+      if (q.state === 'answered' || q.state === 'answered_flagged') entry.answered++;
     }
     return stats;
   }, [questions]);
@@ -579,7 +699,7 @@ export function TestRunnerClient({
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 dark:bg-[#090d16] dark:text-slate-100">
+    <div className="flex h-[calc(100dvh-var(--app-header-h))] flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 dark:bg-[#090d16] dark:text-slate-100">
       {/* 1. CBT Header Bar */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-3">
@@ -599,7 +719,9 @@ export function TestRunnerClient({
           <Clock className={`size-4 ${remainingSeconds < 300 ? 'animate-pulse text-red-600' : 'text-brand-700 dark:text-brand-400'}`} />
           <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Time Left:</span>
           <span
-            className={`font-mono text-base font-bold ${
+            role="timer"
+            aria-live="off"
+            className={`tnum font-mono text-base font-bold ${
               remainingSeconds < 300 ? 'text-red-600 font-extrabold' : 'text-slate-900 dark:text-slate-100'
             }`}
           >
@@ -609,18 +731,35 @@ export function TestRunnerClient({
 
         {/* Right Actions: Sync, Fullscreen & Submit */}
         <div className="flex items-center gap-2">
-          {/* Offline / Sync indicator */}
-          {!isOnline ? (
-            <span className="hidden items-center gap-1 rounded bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 sm:inline-flex dark:bg-amber-950/80 dark:text-amber-300">
-              <WifiOff className="size-3 text-amber-600" />
-              Offline (Saved)
-            </span>
-          ) : isSyncing ? (
-            <span className="hidden items-center gap-1 text-[11px] text-slate-400 sm:inline-flex">
-              <Spinner className="size-3" />
-              Syncing...
-            </span>
-          ) : null}
+          {/* Save-state indicator. syncError used to be recorded and never
+              rendered anywhere, so a student whose answers had stopped reaching
+              the server had no way to know. */}
+          <span className="hidden items-center gap-1 text-xs sm:inline-flex" aria-live="polite">
+            {!isOnline ? (
+              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
+                <WifiOff className="size-3 text-amber-600" />
+                Offline — saved on this device
+              </span>
+            ) : syncError ? (
+              <span
+                title={syncError}
+                className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/80 dark:text-amber-300"
+              >
+                <AlertTriangle className="size-3 text-amber-600" />
+                Not synced
+              </span>
+            ) : isSyncing ? (
+              <span className="inline-flex items-center gap-1 text-slate-400">
+                <Spinner className="size-3" />
+                Saving…
+              </span>
+            ) : lastSavedAt ? (
+              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                <Check className="size-3" />
+                Saved
+              </span>
+            ) : null}
+          </span>
 
           <button
             type="button"
@@ -764,13 +903,19 @@ export function TestRunnerClient({
                     <div className="max-w-xs space-y-2 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                       <input
                         type="text"
-                        value={currentQ.response?.value !== undefined ? String(currentQ.response.value) : ''}
+                        inputMode="decimal"
+                        autoComplete="off"
+                        aria-label="Numerical answer"
+                        value={
+                          currentQ.draftValue ??
+                          (currentQ.response?.value !== undefined ? String(currentQ.response.value) : '')
+                        }
                         onChange={(e) => handleSetIntegerValue(e.target.value)}
                         placeholder="Enter numerical answer..."
-                        className="h-10 w-full rounded-md border border-slate-300 px-3 text-center text-lg font-bold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                        className="tnum h-10 w-full rounded-md border border-slate-300 px-3 text-center text-lg font-bold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                       />
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Enter exact integer or decimal value (e.g. 42 or 3.14).
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Numbers only — use a decimal point, not a comma (e.g. 42 or 3.14).
                       </p>
                     </div>
                   )}
@@ -786,7 +931,7 @@ export function TestRunnerClient({
                 variant="secondary"
                 size="sm"
                 onClick={handleClearResponse}
-                disabled={!currentQ?.response}
+                disabled={!currentQ?.response && !currentQ?.draftValue}
               >
                 Clear Response
               </Button>
@@ -880,43 +1025,35 @@ export function TestRunnerClient({
             </div>
           </div>
 
-          {/* Grid of question buttons */}
+          {/* Grid of question buttons, grouped by subject. The heading used to
+              read "{SUBJECT} Questions" above a grid that rendered every
+              question in the paper regardless of subject. */}
           <div className="flex-1 overflow-y-auto p-3.5">
-            <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              {currentSubject.toUpperCase()} Questions:
-            </h3>
+            {subjects.map((subj) => {
+              const inSubject = questions
+                .map((q, idx) => ({ q, idx }))
+                .filter(({ q }) => q.subject === subj);
+              if (inSubject.length === 0) return null;
 
-            <div className="mt-2.5 grid grid-cols-5 gap-2">
-              {questions.map((q, idx) => {
-                const isCurrent = idx === currentIndex;
-                let bgClass = 'bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'; // not_seen
+              return (
+                <div key={subj} className="mb-4 last:mb-0">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    {subj} · {inSubject.length}
+                  </h3>
 
-                if (q.state === 'answered') {
-                  bgClass = 'bg-emerald-600 text-white hover:bg-emerald-700';
-                } else if (q.state === 'seen_unanswered') {
-                  bgClass = 'bg-red-600 text-white hover:bg-red-700';
-                } else if (q.state === 'flagged_unanswered') {
-                  bgClass = 'bg-purple-700 text-white hover:bg-purple-800';
-                } else if (q.state === 'answered_flagged') {
-                  bgClass = 'bg-purple-700 text-white hover:bg-purple-800';
-                }
-
-                return (
-                  <button
-                    key={q.id}
-                    onClick={() => goToQuestion(idx)}
-                    className={`relative flex size-9 items-center justify-center rounded-md font-bold text-xs transition-all ${bgClass} ${
-                      isCurrent ? 'ring-2 ring-brand-500 ring-offset-2 scale-105' : ''
-                    }`}
-                  >
-                    {q.position}
-                    {q.state === 'answered_flagged' && (
-                      <span className="absolute -bottom-1 -right-1 size-3 rounded-full border-2 border-white bg-emerald-500" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                  <div className="mt-2.5 grid grid-cols-5 gap-2">
+                    {inSubject.map(({ q, idx }) => (
+                      <PaletteButton
+                        key={q.id}
+                        question={q}
+                        isCurrent={idx === currentIndex}
+                        onClick={() => goToQuestion(idx)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </aside>
       </div>
@@ -933,31 +1070,17 @@ export function TestRunnerClient({
             </div>
 
             <div className="mt-3 grid max-h-60 grid-cols-6 gap-2 overflow-y-auto p-1">
-              {questions.map((q, idx) => {
-                let bgClass = 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
-                if (q.state === 'answered') bgClass = 'bg-emerald-600 text-white';
-                else if (q.state === 'seen_unanswered') bgClass = 'bg-red-600 text-white';
-                else if (q.state === 'flagged_unanswered') bgClass = 'bg-purple-700 text-white';
-                else if (q.state === 'answered_flagged') bgClass = 'bg-purple-700 text-white';
-
-                return (
-                  <button
-                    key={q.id}
-                    onClick={() => {
-                      goToQuestion(idx);
-                      setMobilePaletteOpen(false);
-                    }}
-                    className={`relative flex size-10 items-center justify-center rounded-md font-bold text-xs ${bgClass} ${
-                      idx === currentIndex ? 'ring-2 ring-brand-500 ring-offset-2' : ''
-                    }`}
-                  >
-                    {q.position}
-                    {q.state === 'answered_flagged' && (
-                      <span className="absolute -bottom-1 -right-1 size-2.5 rounded-full border-2 border-white bg-emerald-500" />
-                    )}
-                  </button>
-                );
-              })}
+              {questions.map((q, idx) => (
+                <PaletteButton
+                  key={q.id}
+                  question={q}
+                  isCurrent={idx === currentIndex}
+                  onClick={() => {
+                    goToQuestion(idx);
+                    setMobilePaletteOpen(false);
+                  }}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -978,6 +1101,16 @@ export function TestRunnerClient({
               <p className="text-xs text-slate-600 dark:text-slate-400">
                 Are you sure you want to submit? Review your attempt summary below before final submission:
               </p>
+
+              {submitError ? (
+                <Alert tone="red" title="Could not submit">
+                  <p>{submitError}</p>
+                  <p className="mt-1">
+                    Your answers are still saved. Check your connection and press{' '}
+                    <strong>Yes, Submit Test</strong> again.
+                  </p>
+                </Alert>
+              ) : null}
 
               {/* Summary Table */}
               <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
@@ -1034,7 +1167,10 @@ export function TestRunnerClient({
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={handleFinalSubmit}
+                  onClick={() => {
+                    setSubmitError(null);
+                    void closeAttempt('manual');
+                  }}
                   disabled={submitting}
                   className="bg-emerald-600 hover:bg-emerald-700"
                 >

@@ -1,33 +1,24 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  AlertTriangle,
   ArrowDown,
-  ArrowLeft,
   ArrowUp,
   BarChart3,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Clock,
   ExternalLink,
-  Filter,
   Layers,
   Plus,
   Save,
-  Search,
   Send,
   Settings,
   Sparkles,
   Trash2,
-  X,
 } from 'lucide-react';
 import { Alert, Badge, Button, buttonClass, Card, CardBody, CardHeader, CardTitle, Input, Label, Select, Spinner, Textarea } from '@/components/ui';
-import { KatexSpan, QuestionBody } from '@/components/Katex';
+import { QuestionBody } from '@/components/Katex';
+import { fromLocalInputValue, toLocalInputValue } from '@/lib/datetime';
 
 type AssignedQuestion = {
   testId: string;
@@ -80,13 +71,31 @@ export function TestBuilderClient({
   const [publishing, setPublishing] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Question order and marks live in React state until "Save Questions" is
+  // pressed, so navigating away silently discarded them with no warning.
+  const [questionsDirty, setQuestionsDirty] = useState(false);
+
+  useEffect(() => {
+    if (!questionsDirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [questionsDirty]);
 
   // Settings form state
   const [title, setTitle] = useState(test.title);
   const [description, setDescription] = useState(test.description ?? '');
   const [durationMin, setDurationMin] = useState(Math.round(test.durationS / 60));
-  const [opensAt, setOpensAt] = useState(test.opensAt ? test.opensAt.slice(0, 16) : '');
-  const [closesAt, setClosesAt] = useState(test.closesAt ? test.closesAt.slice(0, 16) : '');
+  // toLocalInputValue / fromLocalInputValue, not slice(0,16) / new Date(...).
+  // The old pair were not inverses and shifted the window by the UTC offset on
+  // every save — compounding each time the settings tab was opened.
+  const [opensAt, setOpensAt] = useState(toLocalInputValue(test.opensAt));
+  const [closesAt, setClosesAt] = useState(toLocalInputValue(test.closesAt));
   const [maxAttempts, setMaxAttempts] = useState(test.maxAttempts);
   const [shuffleQuestions, setShuffleQuestions] = useState(test.shuffleQuestions);
   const [shuffleOptions, setShuffleOptions] = useState(test.shuffleOptions);
@@ -136,6 +145,13 @@ export function TestBuilderClient({
     });
   }, [allBankQuestions, assignedIds, filterSubject, filterType, filterStatus, searchQuery]);
 
+  /** Every write to the assigned list goes through here so `questionsDirty`
+   *  can never drift out of sync with what is on screen. */
+  const updateAssigned = useCallback((next: AssignedQuestion[]) => {
+    setAssigned(next.map((q, i) => ({ ...q, position: i + 1 })));
+    setQuestionsDirty(true);
+  }, []);
+
   // Move question
   const moveQuestion = (index: number, direction: 'up' | 'down') => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
@@ -146,9 +162,7 @@ export function TestBuilderClient({
     copy[index] = copy[targetIndex];
     copy[targetIndex] = item;
 
-    // Renumber positions
-    const renumbered = copy.map((q, i) => ({ ...q, position: i + 1 }));
-    setAssigned(renumbered);
+    updateAssigned(copy);
   };
 
   // Add question from picker
@@ -171,36 +185,39 @@ export function TestBuilderClient({
       chapter: q.chapter,
       topic: q.topic,
     };
-    setAssigned([...assigned, newAssigned]);
+    updateAssigned([...assigned, newAssigned]);
   };
 
   // Remove question
   const removeQuestion = (questionId: string) => {
-    const filtered = assigned.filter((q) => q.questionId !== questionId);
-    const renumbered = filtered.map((q, i) => ({ ...q, position: i + 1 }));
-    setAssigned(renumbered);
+    updateAssigned(assigned.filter((q) => q.questionId !== questionId));
   };
 
-  // Bulk set marks preset
+  // Bulk set marks preset. JEE Main gives numerical questions no negative
+  // marking; the button label says so rather than claiming a flat +4/-1/0.
   const applyJeePresetMarks = () => {
-    const updated = assigned.map((q) => ({
-      ...q,
-      marksCorrect: 4,
-      marksWrong: q.type === 'mcq' ? -1 : 0, // Integer typically 0 negative in some JEE patterns, or -1
-      marksUnattempted: 0,
-    }));
-    setAssigned(updated);
+    updateAssigned(
+      assigned.map((q) => ({
+        ...q,
+        marksCorrect: 4,
+        marksWrong: q.type === 'mcq' ? -1 : 0,
+        marksUnattempted: 0,
+      })),
+    );
   };
 
   // Update marks for individual question
   const updateQuestionMarks = (index: number, field: 'marksCorrect' | 'marksWrong' | 'marksUnattempted', value: number) => {
     const copy = [...assigned];
     copy[index] = { ...copy[index], [field]: value };
-    setAssigned(copy);
+    updateAssigned(copy);
   };
 
-  // Save questions
-  const saveQuestions = async () => {
+  // Save questions. Returns whether the write actually landed — handlePublish
+  // used to `await saveQuestions()` and carry on regardless, so a failed save
+  // published whatever question set was last persisted while the teacher looked
+  // at the on-screen list they thought they had just published.
+  const saveQuestions = async (): Promise<boolean> => {
     setSaving(true);
     setError(null);
     setSaveSuccess(false);
@@ -222,13 +239,16 @@ export function TestBuilderClient({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || 'Failed to save questions');
 
+      setQuestionsDirty(false);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
-    } catch (err: any) {
-      setError(err.message);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save questions');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -248,8 +268,8 @@ export function TestBuilderClient({
           title,
           description: description || null,
           durationS: durationMin * 60,
-          opensAt: opensAt ? new Date(opensAt).toISOString() : null,
-          closesAt: closesAt ? new Date(closesAt).toISOString() : null,
+          opensAt: fromLocalInputValue(opensAt),
+          closesAt: fromLocalInputValue(closesAt),
           maxAttempts: Number(maxAttempts),
           shuffleQuestions,
           shuffleOptions,
@@ -284,20 +304,52 @@ export function TestBuilderClient({
       return;
     }
 
-    // Save questions first if pending
-    await saveQuestions();
+    // Save questions first — and stop if that failed, rather than publishing a
+    // question set that differs from what is on screen.
+    const saved = await saveQuestions();
+    if (!saved) return;
 
     setPublishing(true);
     setError(null);
     try {
       const res = await fetch(`/api/tests/${test.id}/publish`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || 'Failed to publish test');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // The API spreads HttpError.extra at the top level, so the unverified
+        // list is data.unverified — not data.details.unverified.
+        if (Array.isArray(data?.unverified) && data.unverified.length > 0) {
+          const list = data.unverified
+            .map((u: { position?: number; humanCode?: string; subject?: string }) =>
+              `Q${u.position ?? '?'} ${u.humanCode ?? ''} (${u.subject ?? '—'})`.trim(),
+            )
+            .join(', ');
+          throw new Error(`Cannot publish — these questions are not verified: ${list}`);
+        }
+        throw new Error(data?.message || 'Failed to publish test');
+      }
 
       setTest(data);
-      alert('Test published successfully! Students can now access and attempt this test.');
-    } catch (err: any) {
-      setError(err.message);
+      setNotice('Test published. Students can now see and attempt it.');
+      setTimeout(() => setNotice(null), 5000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to publish test');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleUnpublish = async () => {
+    setPublishing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/publish`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || 'Failed to unpublish test');
+      setTest(data);
+      setNotice('Test withdrawn. Students can no longer see it.');
+      setTimeout(() => setNotice(null), 5000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to unpublish test');
     } finally {
       setPublishing(false);
     }
@@ -306,17 +358,17 @@ export function TestBuilderClient({
   return (
     <div className="space-y-6">
       {/* Header bar */}
-      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <Link href="/teacher/tests" className="text-xs font-medium text-slate-500 hover:text-slate-900">
+            <Link href="/teacher/tests" className="text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200">
               ← Tests
             </Link>
-            <span className="text-slate-300">/</span>
-            <span className="text-xs font-medium text-slate-700">{test.title}</span>
+            <span className="text-slate-300 dark:text-slate-700">/</span>
+            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{test.title}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">{test.title}</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{test.title}</h1>
             {test.isPublished ? (
               <Badge tone="green">Published</Badge>
             ) : (
@@ -335,17 +387,16 @@ export function TestBuilderClient({
             Analytics
           </Link>
 
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={saveQuestions}
-            disabled={saving}
-          >
+          {questionsDirty && (
+            <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Unsaved changes</span>
+          )}
+
+          <Button variant="secondary" size="sm" onClick={saveQuestions} disabled={saving || !questionsDirty}>
             {saving ? <Spinner className="size-3.5" /> : <Save className="mr-1 size-3.5" />}
             {saveSuccess ? 'Saved!' : 'Save Questions'}
           </Button>
 
-          {!test.isPublished && (
+          {!test.isPublished ? (
             <Button
               variant="primary"
               size="sm"
@@ -355,15 +406,24 @@ export function TestBuilderClient({
               {publishing ? <Spinner className="size-3.5" /> : <Send className="mr-1 size-3.5" />}
               Publish Test
             </Button>
+          ) : (
+            // Unpublish had no UI at all, so a test published by mistake could
+            // not be withdrawn. The API refuses once attempts exist.
+            <Button variant="danger" size="sm" onClick={handleUnpublish} disabled={publishing}>
+              {publishing ? <Spinner className="size-3.5" /> : null}
+              Unpublish
+            </Button>
           )}
         </div>
       </div>
 
       {error && (
-        <Alert tone="red" title="Notice">
+        <Alert tone="red" title="Could not complete that">
           {error}
         </Alert>
       )}
+
+      {notice && <Alert tone="green">{notice}</Alert>}
 
       {/* Unverified questions warning banner */}
       {unverifiedInTest.length > 0 && (
@@ -376,7 +436,7 @@ export function TestBuilderClient({
                 key={u.questionId}
                 href={`/teacher/questions/${u.questionId}`}
                 target="_blank"
-                className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-200"
+                className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-200 dark:bg-amber-900/50 dark:text-amber-200 dark:hover:bg-amber-900"
               >
                 Q{u.position}: {u.humanCode ?? u.questionId.slice(0, 8)} ({u.subject})
                 <ExternalLink className="size-2.5" />
@@ -387,13 +447,13 @@ export function TestBuilderClient({
       )}
 
       {/* Navigation tabs */}
-      <div className="flex border-b border-slate-200">
+      <div className="flex border-b border-slate-200 dark:border-slate-800">
         <button
           onClick={() => setActiveTab('questions')}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
             activeTab === 'questions'
               ? 'border-brand-700 text-brand-700 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Layers className="size-4" />
@@ -405,7 +465,7 @@ export function TestBuilderClient({
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
             activeTab === 'picker'
               ? 'border-brand-700 text-brand-700 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Plus className="size-4" />
@@ -417,7 +477,7 @@ export function TestBuilderClient({
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
             activeTab === 'settings'
               ? 'border-brand-700 text-brand-700 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Settings className="size-4" />
@@ -432,44 +492,44 @@ export function TestBuilderClient({
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <Card>
               <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500">Total Questions</p>
-                <p className="text-xl font-bold text-slate-900">{assigned.length}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Total Questions</p>
+                <p className="tnum text-xl font-bold text-slate-900 dark:text-slate-100">{assigned.length}</p>
               </CardBody>
             </Card>
             <Card>
               <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500">Physics</p>
-                <p className="text-xl font-bold text-blue-700">{subjectCounts.physics}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Physics</p>
+                <p className="tnum text-xl font-bold text-blue-700 dark:text-blue-400">{subjectCounts.physics}</p>
               </CardBody>
             </Card>
             <Card>
               <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500">Chemistry</p>
-                <p className="text-xl font-bold text-emerald-700">{subjectCounts.chemistry}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Chemistry</p>
+                <p className="tnum text-xl font-bold text-emerald-700 dark:text-emerald-400">{subjectCounts.chemistry}</p>
               </CardBody>
             </Card>
             <Card>
               <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500">Maths</p>
-                <p className="text-xl font-bold text-purple-700">{subjectCounts.maths}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Maths</p>
+                <p className="tnum text-xl font-bold text-purple-700 dark:text-purple-400">{subjectCounts.maths}</p>
               </CardBody>
             </Card>
             <Card>
               <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500">Max Marks</p>
-                <p className="text-xl font-bold text-amber-700">{totalMaxMarks}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Max Marks</p>
+                <p className="tnum text-xl font-bold text-amber-700 dark:text-amber-400">{totalMaxMarks}</p>
               </CardBody>
             </Card>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-slate-500">
-              Drag or use arrows to change position order. Scoring rules can be customized per question.
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Use the arrows to reorder questions. Scoring can be set per question.
             </p>
             <div className="flex items-center gap-2">
               <Button variant="secondary" size="sm" onClick={applyJeePresetMarks}>
                 <Sparkles className="mr-1 size-3.5 text-amber-500" />
-                Apply JEE Defaults (+4 / -1 / 0)
+                Apply JEE defaults (MCQ +4/−1/0 · Numerical +4/0/0)
               </Button>
               <Button variant="primary" size="sm" onClick={() => setActiveTab('picker')}>
                 <Plus className="mr-1 size-3.5" />
@@ -480,9 +540,9 @@ export function TestBuilderClient({
 
           {assigned.length === 0 ? (
             <Card className="border-dashed p-10 text-center">
-              <Layers className="mx-auto size-10 text-slate-300" />
-              <h3 className="mt-2 text-sm font-semibold text-slate-800">No questions added yet</h3>
-              <p className="mt-1 text-xs text-slate-500">
+              <Layers className="mx-auto size-10 text-slate-300 dark:text-slate-700" />
+              <h3 className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-200">No questions added yet</h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 Click &quot;Add from Bank&quot; to pick verified questions from Physics, Chemistry, and Mathematics.
               </p>
               <Button
@@ -502,13 +562,13 @@ export function TestBuilderClient({
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       {/* Left: Position & Question details */}
                       <div className="flex items-start gap-3">
-                        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-bold text-white">
+                        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-bold text-white dark:bg-slate-700">
                           {q.position}
                         </div>
 
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold text-slate-900">
+                            <span className="font-semibold text-slate-900 dark:text-slate-100">
                               {q.humanCode ?? `Question #${idx + 1}`}
                             </span>
                             <Badge
@@ -528,17 +588,17 @@ export function TestBuilderClient({
                             ) : (
                               <Badge tone="amber">Unverified</Badge>
                             )}
-                            {q.chapter && <span className="text-xs text-slate-500">• {q.chapter}</span>}
+                            {q.chapter && <span className="text-xs text-slate-500 dark:text-slate-400">• {q.chapter}</span>}
                           </div>
 
                           {/* Question body preview */}
-                          <div className="line-clamp-2 text-xs text-slate-700">
+                          <div className="line-clamp-2 text-xs text-slate-700 dark:text-slate-300">
                             {previewQid === q.questionId ? (
-                              <div className="rounded border border-slate-200 bg-slate-50 p-2">
+                              <div className="rounded border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-950">
                                 <QuestionBody
                                   body={q.body}
                                   renderImage={(id) => (
-                                    <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[10px] text-brand-700">
+                                    <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[10px] text-brand-700 dark:bg-brand-950 dark:text-brand-300">
                                       [IMG:{id}]
                                     </span>
                                   )}
@@ -552,7 +612,7 @@ export function TestBuilderClient({
                           <button
                             type="button"
                             onClick={() => setPreviewQid(previewQid === q.questionId ? null : q.questionId)}
-                            className="text-[11px] font-medium text-brand-700 hover:underline"
+                            className="text-xs font-medium text-brand-700 hover:underline dark:text-brand-400"
                           >
                             {previewQid === q.questionId ? 'Collapse preview' : 'View full KaTeX preview'}
                           </button>
@@ -561,34 +621,34 @@ export function TestBuilderClient({
 
                       {/* Right: Scoring scheme & Actions */}
                       <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex items-center gap-1.5 rounded-md bg-slate-50 p-1.5 ring-1 ring-slate-200">
+                        <div className="flex items-center gap-1.5 rounded-md bg-slate-50 p-1.5 ring-1 ring-slate-200 dark:bg-slate-950 dark:ring-slate-800">
                           <div className="text-center">
-                            <span className="block text-[9px] font-bold text-emerald-700">+Correct</span>
+                            <span className="block text-[10px] font-bold text-emerald-700 dark:text-emerald-400">+Correct</span>
                             <input
                               type="number"
                               value={q.marksCorrect}
                               onChange={(e) => updateQuestionMarks(idx, 'marksCorrect', Number(e.target.value))}
-                              className="h-6 w-12 rounded border border-slate-200 bg-white text-center text-xs font-semibold text-slate-900"
+                              className="h-6 w-12 tnum rounded border border-slate-200 bg-white text-center text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                             />
                           </div>
 
                           <div className="text-center">
-                            <span className="block text-[9px] font-bold text-red-700">-Wrong</span>
+                            <span className="block text-[10px] font-bold text-red-700 dark:text-red-400">-Wrong</span>
                             <input
                               type="number"
                               value={q.marksWrong}
                               onChange={(e) => updateQuestionMarks(idx, 'marksWrong', Number(e.target.value))}
-                              className="h-6 w-12 rounded border border-slate-200 bg-white text-center text-xs font-semibold text-slate-900"
+                              className="h-6 w-12 tnum rounded border border-slate-200 bg-white text-center text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                             />
                           </div>
 
                           <div className="text-center">
-                            <span className="block text-[9px] font-bold text-slate-500">Unatt</span>
+                            <span className="block text-[10px] font-bold text-slate-500 dark:text-slate-400">Unatt</span>
                             <input
                               type="number"
                               value={q.marksUnattempted}
                               onChange={(e) => updateQuestionMarks(idx, 'marksUnattempted', Number(e.target.value))}
-                              className="h-6 w-12 rounded border border-slate-200 bg-white text-center text-xs font-semibold text-slate-900"
+                              className="h-6 w-12 tnum rounded border border-slate-200 bg-white text-center text-xs font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                             />
                           </div>
                         </div>
@@ -599,7 +659,7 @@ export function TestBuilderClient({
                             type="button"
                             onClick={() => moveQuestion(idx, 'up')}
                             disabled={idx === 0}
-                            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
+                            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                             title="Move up"
                           >
                             <ArrowUp className="size-4" />
@@ -608,7 +668,7 @@ export function TestBuilderClient({
                             type="button"
                             onClick={() => moveQuestion(idx, 'down')}
                             disabled={idx === assigned.length - 1}
-                            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
+                            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                             title="Move down"
                           >
                             <ArrowDown className="size-4" />
@@ -616,7 +676,7 @@ export function TestBuilderClient({
                           <button
                             type="button"
                             onClick={() => removeQuestion(q.questionId)}
-                            className="rounded p-1 text-red-500 hover:bg-red-50 hover:text-red-700"
+                            className="rounded p-1 text-red-500 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                             title="Remove from test"
                           >
                             <Trash2 className="size-4" />
@@ -676,7 +736,7 @@ export function TestBuilderClient({
 
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-500">
-              Showing {filteredBank.length} question(s) from bank not yet in this test.
+              Showing {filteredBank.length} question(s) from the bank not yet in this test.
             </p>
             <Button
               variant="secondary"
@@ -703,7 +763,7 @@ export function TestBuilderClient({
                   chapter: q.chapter,
                   topic: q.topic,
                 }));
-                setAssigned([...assigned, ...newItems]);
+                updateAssigned([...assigned, ...newItems]);
               }}
               disabled={filteredBank.filter((q) => q.status === 'verified').length === 0}
             >
@@ -717,7 +777,7 @@ export function TestBuilderClient({
                 <CardBody className="flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-slate-900">{q.humanCode ?? q.id.slice(0, 8)}</span>
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">{q.humanCode ?? q.id.slice(0, 8)}</span>
                       <Badge
                         tone={
                           q.subject === 'physics'
@@ -735,14 +795,14 @@ export function TestBuilderClient({
                       ) : (
                         <Badge tone="amber">Draft</Badge>
                       )}
-                      {q.chapter && <span className="text-xs text-slate-500">• {q.chapter}</span>}
+                      {q.chapter && <span className="text-xs text-slate-500 dark:text-slate-400">• {q.chapter}</span>}
                     </div>
 
-                    <div className="text-xs text-slate-700">
+                    <div className="text-xs text-slate-700 dark:text-slate-300">
                       <QuestionBody
                         body={q.body}
                         renderImage={(id) => (
-                          <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[10px] text-brand-700">
+                          <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[10px] text-brand-700 dark:bg-brand-950 dark:text-brand-300">
                             [IMG:{id}]
                           </span>
                         )}
@@ -761,7 +821,7 @@ export function TestBuilderClient({
             ))}
 
             {filteredBank.length === 0 && (
-              <div className="p-8 text-center text-xs text-slate-400">
+              <div className="p-8 text-center text-xs text-slate-400 dark:text-slate-500">
                 No matching questions found in bank with current filters.
               </div>
             )}
@@ -847,7 +907,7 @@ export function TestBuilderClient({
                 </div>
               </div>
 
-              <div className="border-t border-slate-100 pt-4">
+              <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
                 <Label htmlFor="resultsPolicy">Results & Solutions Release Policy</Label>
                 <Select
                   id="resultsPolicy"
@@ -859,24 +919,24 @@ export function TestBuilderClient({
                 </Select>
               </div>
 
-              <div className="space-y-2 border-t border-slate-100 pt-4">
+              <div className="space-y-2 border-t border-slate-100 pt-4 dark:border-slate-800">
                 <Label>Shuffle Options</Label>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
+                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
                   <input
                     type="checkbox"
                     checked={shuffleQuestions}
                     onChange={(e) => setShuffleQuestions(e.target.checked)}
-                    className="rounded border-slate-300 text-brand-700 focus:ring-brand-500"
+                    className="rounded border-slate-300 text-brand-700 focus:ring-brand-500 dark:border-slate-700"
                   />
                   Shuffle questions per student
                 </label>
 
-                <label className="flex items-center gap-2 text-sm text-slate-700">
+                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
                   <input
                     type="checkbox"
                     checked={shuffleOptions}
                     onChange={(e) => setShuffleOptions(e.target.checked)}
-                    className="rounded border-slate-300 text-brand-700 focus:ring-brand-500"
+                    className="rounded border-slate-300 text-brand-700 focus:ring-brand-500 dark:border-slate-700"
                   />
                   Shuffle MCQ options per student
                 </label>

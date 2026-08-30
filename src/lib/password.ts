@@ -24,9 +24,22 @@ export async function hashPassword(password: string): Promise<string> {
   return ['scrypt', N, R, P, salt.toString('base64url'), hash.toString('base64url')].join('$');
 }
 
+/**
+ * A real, well-formed hash of a value nobody can supply. Verifying against this
+ * costs exactly as much as verifying against a genuine hash.
+ *
+ * `verifyPassword(pw, null)` used to return `false` immediately, which made
+ * auth.ts's "still spend the time hashing so a missing user is not measurably
+ * faster" defence a no-op: unknown usernames answered ~100ms sooner than known
+ * ones, a trivially measurable enumeration oracle. Callers with no stored hash
+ * now burn the same scrypt work before failing.
+ */
+const DUMMY_HASH =
+  'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA$' + 'A'.repeat(43);
+
 export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
-  if (!stored) return false;
-  const parts = stored.split('$');
+  const target = stored ?? DUMMY_HASH;
+  const parts = target.split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
 
   const [, nStr, rStr, pStr, saltB64, hashB64] = parts;
@@ -44,6 +57,9 @@ export async function verifyPassword(password: string, stored: string | null): P
   } catch {
     return false;
   }
+
+  // The dummy path did the work; it must still never authenticate.
+  if (!stored) return false;
 
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

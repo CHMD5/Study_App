@@ -4,13 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Award,
-  BarChart2,
-  CheckCircle2,
-  Clock,
-  Sparkles,
   Target,
   TrendingUp,
-  XCircle,
 } from 'lucide-react';
 import {
   ResponsiveContainer,

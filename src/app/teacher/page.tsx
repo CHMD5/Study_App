@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { sql } from 'drizzle-orm';
-import { FileText, ListChecks, Sparkles, UploadCloud } from 'lucide-react';
+import { FileText, ListChecks, Sparkles } from 'lucide-react';
 import { getDb } from '@/db/client';
 import { papers, questions } from '@/db/schema';
 import { Card, CardBody } from '@/components/ui';

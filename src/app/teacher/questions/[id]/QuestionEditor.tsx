@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ImagePlus, Plus, Trash2, Upload, X } from 'lucide-react';
 import {
   Alert,
@@ -61,7 +61,6 @@ export function QuestionEditor({
   paper: Paper | null;
 }) {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [question, setQuestion] = useState(initialQuestion);
   const [fields, setFields] = useState<EditableFields>(() => toEditable(initialQuestion));
   const [images, setImages] = useState(initialImages);
@@ -172,6 +171,11 @@ export function QuestionEditor({
         const img = await res.json();
         setImages((prev) => [...prev.filter((i) => i.placeholderId !== armedPlaceholder), img]);
         setArmedPlaceholder(null);
+      } else {
+        // A failed crop upload used to be swallowed entirely — the chip simply
+        // stayed unresolved with no indication why.
+        const body = await res.json().catch(() => ({}));
+        setSaveError(body.message ?? 'Could not save that crop. Try again.');
       }
     } finally {
       setUploading(false);
@@ -192,7 +196,7 @@ export function QuestionEditor({
         setArmedPlaceholder(null);
       } else {
         const body = await res.json().catch(() => ({}));
-        alert(body.message ?? 'Image upload failed.');
+        setSaveError(body.message ?? 'Image upload failed.');
       }
     } finally {
       setUploading(false);
@@ -222,8 +226,20 @@ export function QuestionEditor({
     }
   }
 
+  // Warn before losing an in-progress edit. The dirty chip in the header was
+  // the only signal, and it is easy to miss on the way to another tab.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
   return (
-    <div className="flex h-[calc(100vh-6rem)] flex-col gap-4">
+    <div className="flex h-[calc(100dvh-var(--app-header-h)-2.5rem)] flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -565,10 +581,16 @@ function ImageChip({
 
 function OptionsEditor({ options, onChange }: { options: QuestionOption[]; onChange: (o: QuestionOption[]) => void }) {
   const keys = ['A', 'B', 'C', 'D'] as const;
+  const order = (k: string) => keys.indexOf(k as (typeof keys)[number]);
 
   function setBody(key: string, body: string) {
     const exists = options.some((o) => o.key === key);
-    onChange(exists ? options.map((o) => (o.key === key ? { ...o, body } : o)) : [...options, { key, body }]);
+    const next = exists
+      ? options.map((o) => (o.key === key ? { ...o, body } : o))
+      : [...options, { key, body }];
+    // Always store A→B→C→D. Appending in click order meant adding D before B
+    // produced [A, D, B], and that is the order students then saw.
+    onChange(next.slice().sort((a, b) => order(a.key) - order(b.key)));
   }
 
   function remove(key: string) {
@@ -622,6 +644,37 @@ function AnswerEditor({
 }) {
   const [mode, setMode] = useState<'exact' | 'range'>(answer && 'min' in answer ? 'range' : 'exact');
 
+  /**
+   * Range bounds are held locally while being typed.
+   *
+   * Both inputs used to read straight off `answer`, and each keystroke called
+   * `onChange(min !== undefined && max !== undefined ? {min, max} : null)`.
+   * Typing into `min` while `max` was still empty therefore set `answer` to
+   * null — which blanked the very field being typed into. The same in reverse.
+   * A tolerance range was literally unenterable, even though grading, the
+   * database and the result screen all support one.
+   */
+  const [minText, setMinText] = useState(answer && 'min' in answer ? String(answer.min) : '');
+  const [maxText, setMaxText] = useState(answer && 'max' in answer ? String(answer.max) : '');
+
+  /** Lift only when both bounds parse; otherwise clear the stored key. */
+  function commitRange(nextMin: string, nextMax: string) {
+    const min = nextMin.trim() === '' ? NaN : Number(nextMin);
+    const max = nextMax.trim() === '' ? NaN : Number(nextMax);
+    onChange(Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null);
+  }
+
+  const rangeInverted =
+    minText.trim() !== '' &&
+    maxText.trim() !== '' &&
+    Number.isFinite(Number(minText)) &&
+    Number.isFinite(Number(maxText)) &&
+    Number(minText) > Number(maxText);
+
+  // A key left pointing at an option that no longer exists would pass the old
+  // "answer is not null" verify gate and mark every student wrong.
+  const danglingKey = type === 'mcq' && answer && 'key' in answer && !options.some((o) => o.key === answer.key);
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -630,26 +683,54 @@ function AnswerEditor({
       </CardHeader>
       <CardBody className="space-y-3">
         {type === 'mcq' ? (
-          <Select
-            value={answer && 'key' in answer ? answer.key : ''}
-            onChange={(e) => onChange(e.target.value ? { key: e.target.value } : null)}
-          >
-            <option value="">Select the correct option…</option>
-            {options.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.key}
-              </option>
-            ))}
-          </Select>
+          <>
+            <Select
+              aria-label="Correct option"
+              value={answer && 'key' in answer ? answer.key : ''}
+              onChange={(e) => onChange(e.target.value ? { key: e.target.value } : null)}
+            >
+              <option value="">Select the correct option…</option>
+              {options.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.key}
+                </option>
+              ))}
+            </Select>
+            {danglingKey ? (
+              <p className="text-xs font-medium text-red-600 dark:text-red-400">
+                The saved answer key is{' '}
+                <strong>{answer && 'key' in answer ? answer.key : ''}</strong>, but this question no longer has that
+                option. Pick the correct one again before verifying.
+              </p>
+            ) : null}
+          </>
         ) : (
           <>
             <div className="flex gap-4 text-sm">
               <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                <input type="radio" checked={mode === 'exact'} onChange={() => { setMode('exact'); onChange(null); }} />
+                <input
+                  type="radio"
+                  name="answer-mode"
+                  checked={mode === 'exact'}
+                  onChange={() => {
+                    setMode('exact');
+                    setMinText('');
+                    setMaxText('');
+                    onChange(null);
+                  }}
+                />
                 Exact value
               </label>
               <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                <input type="radio" checked={mode === 'range'} onChange={() => { setMode('range'); onChange(null); }} />
+                <input
+                  type="radio"
+                  name="answer-mode"
+                  checked={mode === 'range'}
+                  onChange={() => {
+                    setMode('range');
+                    onChange(null);
+                  }}
+                />
                 Tolerance range
               </label>
             </div>
@@ -658,34 +739,46 @@ function AnswerEditor({
                 type="number"
                 step="any"
                 placeholder="e.g. 42"
+                aria-label="Exact answer value"
                 value={answer && 'value' in answer ? answer.value : ''}
                 onChange={(e) => onChange(e.target.value === '' ? null : { value: Number(e.target.value) })}
               />
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  type="number"
-                  step="any"
-                  placeholder="min"
-                  value={answer && 'min' in answer ? answer.min : ''}
-                  onChange={(e) => {
-                    const min = e.target.value === '' ? undefined : Number(e.target.value);
-                    const max = answer && 'max' in answer ? answer.max : undefined;
-                    onChange(min !== undefined && max !== undefined ? { min, max } : null);
-                  }}
-                />
-                <Input
-                  type="number"
-                  step="any"
-                  placeholder="max"
-                  value={answer && 'max' in answer ? answer.max : ''}
-                  onChange={(e) => {
-                    const max = e.target.value === '' ? undefined : Number(e.target.value);
-                    const min = answer && 'min' in answer ? answer.min : undefined;
-                    onChange(min !== undefined && max !== undefined ? { min, max } : null);
-                  }}
-                />
-              </div>
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="min"
+                    aria-label="Range minimum"
+                    value={minText}
+                    onChange={(e) => {
+                      setMinText(e.target.value);
+                      commitRange(e.target.value, maxText);
+                    }}
+                  />
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="max"
+                    aria-label="Range maximum"
+                    value={maxText}
+                    onChange={(e) => {
+                      setMaxText(e.target.value);
+                      commitRange(minText, e.target.value);
+                    }}
+                  />
+                </div>
+                {rangeInverted ? (
+                  <p className="text-xs font-medium text-red-600 dark:text-red-400">
+                    The minimum is greater than the maximum — no answer could ever fall inside this range.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Both bounds are required. Any response between them (inclusive) is marked correct.
+                  </p>
+                )}
+              </>
             )}
           </>
         )}

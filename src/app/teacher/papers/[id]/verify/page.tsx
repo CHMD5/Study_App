@@ -26,7 +26,7 @@ export default async function PaperVerifyPage({ params }: { params: Promise<{ id
       : [];
 
   return (
-    <div className="flex h-[calc(100vh-4.5rem)] flex-col -mx-4 -my-6 sm:-mx-6">
+    <div className="-mx-4 -my-6 flex h-[calc(100dvh-var(--app-header-h))] flex-col sm:-mx-6">
       <PaperVerifyStudio initialPaper={paper} initialQuestions={paperQuestions} initialImages={images} />
     </div>
   );

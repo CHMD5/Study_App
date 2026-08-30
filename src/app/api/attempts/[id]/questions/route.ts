@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { requireSession } from '@/lib/auth';
+import { apiSession } from '@/lib/auth';
 import { HttpError, json, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
 import { attemptAnswers, attempts, questions, testQuestions } from '@/db/schema';
@@ -8,7 +8,9 @@ import { toStudentQuestion } from '@/lib/dto';
 type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = withApi<Ctx>(async (req, { params }) => {
-  const session = await requireSession();
+  // apiSession, not requireSession — the latter redirects, which withApi turns
+  // into a 500 rather than a 401.
+  const session = await apiSession();
   const { id: attemptId } = await params;
   const db = await getDb();
 

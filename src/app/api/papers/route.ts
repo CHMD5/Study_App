@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { PDFDocument } from 'pdf-lib';
 import { apiTeacher } from '@/lib/auth';
-import { HttpError, json, withApi } from '@/lib/http';
+import { HttpError, isUniqueViolation, json, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
 import { papers } from '@/db/schema';
 import { paperKey } from '@/lib/paths';
@@ -69,23 +69,43 @@ export const POST = withApi(async (req) => {
   const { sha256, size } = await saveBufferWithHash(relativeKey, bytes);
 
   try {
-    const examYear = examYearRaw ? Number(examYearRaw) : undefined;
-    const code = await nextPaperCode(examYear);
-    const [row] = await db
-      .insert(papers)
-      .values({
-        id,
-        title,
-        code,
-        examYear: examYear ?? null,
-        pdfPages,
-        registeredBy: session.userId,
-        filePath: relativeKey,
-        originalFilename: file.name,
-        fileSizeBytes: size,
-        sha256,
-      })
-      .returning();
+    const examYearParsed = examYearRaw ? Number(examYearRaw) : undefined;
+    const examYear =
+      examYearParsed !== undefined && Number.isInteger(examYearParsed) && examYearParsed >= 1950 && examYearParsed <= 2100
+        ? examYearParsed
+        : undefined;
+
+    if (examYearRaw && examYear === undefined) {
+      throw new HttpError(422, 'validation_failed', 'Exam year must be a four-digit year between 1950 and 2100.');
+    }
+
+    // nextPaperCode is not atomic; on the rare collision, recompute and retry
+    // once rather than surfacing a raw constraint violation.
+    let row;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const code = await nextPaperCode(examYear);
+      try {
+        [row] = await db
+          .insert(papers)
+          .values({
+            id,
+            title,
+            code,
+            examYear: examYear ?? null,
+            pdfPages,
+            registeredBy: session.userId,
+            filePath: relativeKey,
+            originalFilename: file.name,
+            fileSizeBytes: size,
+            sha256,
+          })
+          .returning();
+        break;
+      } catch (err) {
+        if (attempt === 0 && isUniqueViolation(err)) continue;
+        throw err;
+      }
+    }
 
     return json(row, 201);
   } catch (err) {
@@ -96,12 +116,27 @@ export const POST = withApi(async (req) => {
   }
 });
 
+/**
+ * Next free `<prefix>-<n>` code.
+ *
+ * Was a full-table scan of every code into a Set, then a linear probe from 1.
+ * Now asks the database for the highest suffix already in use for this prefix
+ * and adds one — index-friendly, and it doesn't load the whole table.
+ *
+ * Still not atomic against a concurrent upload, so the caller catches 23505 and
+ * retries. That is the right trade here: making it atomic would need a
+ * sequence per prefix, and paper registration is a rare, human-paced action.
+ */
 async function nextPaperCode(examYear?: number): Promise<string> {
   const db = await getDb();
   const prefix = examYear ? `JM${examYear}` : 'JM';
-  const rows = await db.select({ code: papers.code }).from(papers);
-  const existing = new Set(rows.map((r) => r.code));
-  let n = 1;
-  while (existing.has(`${prefix}-${n}`)) n += 1;
-  return `${prefix}-${n}`;
+
+  const [row] = await db
+    .select({
+      maxN: sql<number>`cast(coalesce(max(substring(${papers.code} from ${`^${prefix}-(\\d+)$`})::int), 0) as int)`,
+    })
+    .from(papers)
+    .where(sql`${papers.code} ~ ${`^${prefix}-\\d+$`}`);
+
+  return `${prefix}-${(row?.maxN ?? 0) + 1}`;
 }

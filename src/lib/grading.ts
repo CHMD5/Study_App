@@ -24,6 +24,30 @@ export type GradedAttemptResult = {
 };
 
 /**
+ * Whether a stored response is something the grader can actually score.
+ *
+ * The result screen used to decide "attempted" with a bare
+ * `response !== null`, while the grader required a non-blank key or a numeric
+ * value. A response like `{ value: "abc" }` therefore counted as a WRONG answer
+ * in the scorecard summary while the grader awarded unattempted marks for it —
+ * the score and the summary disagreed on the same question. Both now call this.
+ */
+export function isGradeableResponse(
+  type: 'mcq' | 'integer',
+  response: { key?: string; value?: number | string } | null | undefined,
+): boolean {
+  if (!response) return false;
+
+  if (type === 'mcq') {
+    return typeof response.key === 'string' && response.key.trim() !== '';
+  }
+
+  const { value } = response;
+  if (value === undefined || value === null || value === '') return false;
+  return !Number.isNaN(Number(value));
+}
+
+/**
  * Evaluates a single student response against the question's answer key.
  *
  * Handles:

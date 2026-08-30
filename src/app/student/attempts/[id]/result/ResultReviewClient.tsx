@@ -2,24 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import {
-  AlertCircle,
-  AlertTriangle,
-  ArrowLeft,
-  Award,
-  BookOpen,
-  CheckCircle2,
-  Clock,
-  Eye,
-  Filter,
-  HelpCircle,
-  Sparkles,
-  TrendingUp,
-  XCircle,
-} from 'lucide-react';
-import { Alert, Badge, Button, buttonClass, Card, CardBody, CardHeader, CardTitle, Spinner } from '@/components/ui';
-import { KatexSpan, QuestionBody } from '@/components/Katex';
+import { Clock, Sparkles } from 'lucide-react';
+import { Alert, Badge, buttonClass, Card, CardBody, Spinner } from '@/components/ui';
+import { QuestionBody } from '@/components/Katex';
 
 type ReviewQuestion = {
   id: string;
@@ -84,7 +69,6 @@ export function ResultReviewClient({
   attemptId: string;
   userRole: 'student' | 'teacher';
 }) {
-  const router = useRouter();
   const [data, setData] = useState<ResultData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -134,8 +118,8 @@ export function ResultReviewClient({
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-slate-500">
-        <Spinner className="size-8 text-brand-700" />
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
+        <Spinner className="size-8 text-brand-700 dark:text-brand-400" />
         <p className="text-sm font-medium">Loading scorecard and worked solutions...</p>
       </div>
     );
@@ -145,9 +129,9 @@ export function ResultReviewClient({
     return (
       <div className="mx-auto max-w-md space-y-4 p-8 text-center">
         <Card className="p-8">
-          <Clock className="mx-auto size-12 text-brand-600" />
-          <h2 className="mt-3 text-lg font-bold text-slate-900">Results Pending Release</h2>
-          <p className="mt-1 text-xs text-slate-500">
+          <Clock className="mx-auto size-12 text-brand-600 dark:text-brand-400" />
+          <h2 className="mt-3 text-lg font-bold text-slate-900 dark:text-slate-100">Results Pending Release</h2>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Your attempt was successfully submitted! The results and step-by-step solutions for this test will be released by your teacher once all candidates have finished.
           </p>
           <Link href="/student" className={buttonClass('primary', 'md', 'mt-5')}>
@@ -177,7 +161,7 @@ export function ResultReviewClient({
       <div className="flex items-center gap-2">
         <Link
           href={userRole === 'teacher' ? `/teacher/tests/${data.testId}/analytics` : '/student'}
-          className="text-xs font-medium text-slate-500 hover:text-slate-900"
+          className="text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
         >
           ← {userRole === 'teacher' ? 'Back to test analytics' : 'Back to tests'}
         </Link>
@@ -219,8 +203,9 @@ export function ResultReviewClient({
           </div>
 
           <div className="rounded-lg bg-white/5 p-3 text-center">
-            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Accuracy</p>
-            <p className="mt-0.5 text-xl font-bold text-emerald-400">{data.summary.accuracy}%</p>
+            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Accuracy</p>
+            <p className="tnum mt-0.5 text-xl font-bold text-emerald-400">{data.summary.accuracy}%</p>
+            <p className="text-[10px] text-slate-400">of attempted</p>
           </div>
 
           <div className="rounded-lg bg-white/5 p-3 text-center">
@@ -241,36 +226,49 @@ export function ResultReviewClient({
 
       {/* 2. Subject Breakdown Cards */}
       <div className="grid gap-3 sm:grid-cols-3">
-        {(['physics', 'chemistry', 'maths'] as const).map((s) => {
-          const stats = data.summary.subjectScores[s] ?? { marks: 0, maxMarks: 0, correct: 0, total: 0 };
-          const acc = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0;
-          return (
-            <Card key={s} className="border-slate-200">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{s}</span>
-                  <Badge
-                    tone={s === 'physics' ? 'brand' : s === 'chemistry' ? 'green' : 'amber'}
-                  >
-                    {stats.marks} / {stats.maxMarks} M
-                  </Badge>
-                </div>
-                <div className="mt-2 flex items-baseline justify-between">
-                  <span className="text-xl font-black text-slate-900">{stats.marks} Marks</span>
-                  <span className="text-xs font-medium text-slate-500">{acc}% Accuracy</span>
-                </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={`h-full ${
-                      s === 'physics' ? 'bg-brand-600' : s === 'chemistry' ? 'bg-emerald-600' : 'bg-amber-500'
-                    }`}
-                    style={{ width: `${Math.max(0, Math.min(100, (stats.marks / Math.max(1, stats.maxMarks)) * 100))}%` }}
-                  />
-                </div>
-              </CardBody>
-            </Card>
-          );
-        })}
+        {/* Only the subjects this paper actually contains. */}
+        {(['physics', 'chemistry', 'maths'] as const)
+          .filter((s) => (data.summary.subjectScores[s]?.total ?? 0) > 0)
+          .map((s) => {
+            const stats = data.summary.subjectScores[s] ?? { marks: 0, maxMarks: 0, correct: 0, total: 0 };
+            // Correct / attempted, matching the hero's definition. This used to
+            // divide by `total` (including unattempted), so the same scorecard
+            // reported two different accuracies for the same performance.
+            const attempted = data.questions.filter((q) => q.subject === s && q.isAttempted).length;
+            const acc = attempted > 0 ? Math.round((stats.correct / attempted) * 100) : 0;
+            return (
+              <Card key={s}>
+                <CardBody className="p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      {s}
+                    </span>
+                    <Badge tone={s === 'physics' ? 'brand' : s === 'chemistry' ? 'green' : 'amber'}>
+                      {stats.marks} / {stats.maxMarks} M
+                    </Badge>
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between">
+                    <span className="tnum text-xl font-black text-slate-900 dark:text-slate-100">
+                      {stats.marks} Marks
+                    </span>
+                    <span className="tnum text-xs font-medium text-slate-500 dark:text-slate-400">
+                      {acc}% of attempted
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <div
+                      className={`h-full ${
+                        s === 'physics' ? 'bg-brand-600' : s === 'chemistry' ? 'bg-emerald-600' : 'bg-amber-500'
+                      }`}
+                      style={{
+                        width: `${Math.max(0, Math.min(100, (stats.marks / Math.max(1, stats.maxMarks)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                </CardBody>
+              </Card>
+            );
+          })}
       </div>
 
       {/* 3. Detailed Question Solutions Section */}
@@ -324,19 +322,19 @@ export function ResultReviewClient({
             const timeTakenSec = Math.round((q.timeSpentMs ?? 0) / 1000);
             const expectedSec = q.expectedTimeS ?? 120;
 
-            let cardBorder = 'border-slate-200';
+            let cardBorder = '';
             if (q.isAttempted) {
-              if (q.isCorrect) cardBorder = 'border-emerald-300 ring-1 ring-emerald-200';
-              else cardBorder = 'border-red-300 ring-1 ring-red-200';
+              if (q.isCorrect) cardBorder = 'ring-1 ring-emerald-300 dark:ring-emerald-800';
+              else cardBorder = 'ring-1 ring-red-300 dark:ring-red-800';
             }
 
             return (
               <Card key={q.id} className={`${cardBorder} transition-shadow hover:shadow-sm`}>
                 <CardBody className="space-y-4 p-5">
                   {/* Question Header */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-bold text-white">
+                      <span className="tnum rounded bg-slate-900 px-2 py-0.5 text-xs font-bold text-white dark:bg-slate-700">
                         Q{q.position}
                       </span>
                       <Badge
@@ -351,7 +349,7 @@ export function ResultReviewClient({
                         {q.subject.toUpperCase()}
                       </Badge>
                       <Badge tone="slate">{q.type.toUpperCase()}</Badge>
-                      {q.chapter && <span className="text-xs text-slate-500">• {q.chapter}</span>}
+                      {q.chapter && <span className="text-xs text-slate-500 dark:text-slate-400">• {q.chapter}</span>}
                     </div>
 
                     {/* Score & Time Badges */}
@@ -368,7 +366,7 @@ export function ResultReviewClient({
                       )}
 
                       {/* Time taken */}
-                      <span className="flex items-center gap-1 text-xs text-slate-500">
+                      <span className="tnum flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                         <Clock className="size-3.5" />
                         {timeTakenSec}s (Exp: {expectedSec}s)
                       </span>
@@ -383,11 +381,11 @@ export function ResultReviewClient({
                   </div>
 
                   {/* Question Body */}
-                  <div className="text-sm leading-relaxed text-slate-900">
+                  <div className="text-sm leading-relaxed text-slate-900 dark:text-slate-100">
                     <QuestionBody
                       body={q.body}
                       renderImage={(placeholderId) => (
-                        <div className="my-2 overflow-hidden rounded border border-slate-200 bg-slate-50 p-1">
+                        <div className="my-2 overflow-hidden rounded border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-950">
                           <img
                             src={`/api/files/images/${q.id}/${placeholderId}`}
                             alt="Figure"
@@ -407,11 +405,14 @@ export function ResultReviewClient({
                           const isCorrectKey =
                             q.answer && 'key' in q.answer && q.answer.key === opt.key;
 
-                          let optionClass = 'border-slate-200 bg-slate-50 text-slate-700';
+                          let optionClass =
+                            'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300';
                           if (isCorrectKey) {
-                            optionClass = 'border-emerald-500 bg-emerald-50 text-emerald-900 font-semibold ring-1 ring-emerald-500';
+                            optionClass =
+                              'border-emerald-500 bg-emerald-50 text-emerald-900 font-semibold ring-1 ring-emerald-500 dark:border-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-200 dark:ring-emerald-700';
                           } else if (isStudentPick && !q.isCorrect) {
-                            optionClass = 'border-red-500 bg-red-50 text-red-900 font-semibold ring-1 ring-red-500';
+                            optionClass =
+                              'border-red-500 bg-red-50 text-red-900 font-semibold ring-1 ring-red-500 dark:border-red-600 dark:bg-red-950/50 dark:text-red-200 dark:ring-red-700';
                           }
 
                           return (
@@ -419,7 +420,7 @@ export function ResultReviewClient({
                               key={opt.key}
                               className={`flex items-start gap-2.5 rounded-lg border p-3 text-xs ${optionClass}`}
                             >
-                              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border font-bold">
+                              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-current font-bold">
                                 {opt.key}
                               </span>
                               <div className="flex-1">
@@ -450,16 +451,24 @@ export function ResultReviewClient({
                       </div>
                     ) : (
                       /* Integer / Numerical Review */
-                      <div className="flex flex-wrap items-center gap-4 rounded-lg bg-slate-50 p-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-4 rounded-lg bg-slate-50 p-3 text-xs dark:bg-slate-950">
                         <div>
-                          <span className="text-slate-500">Your Response: </span>
-                          <strong className={q.isCorrect ? 'text-emerald-700' : 'text-red-600'}>
-                            {q.response?.value !== undefined ? String(q.response.value) : 'None'}
+                          <span className="text-slate-500 dark:text-slate-400">Your Response: </span>
+                          <strong
+                            className={`tnum ${
+                              !q.isAttempted
+                                ? 'text-slate-500 dark:text-slate-400'
+                                : q.isCorrect
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {q.isAttempted && q.response?.value !== undefined ? String(q.response.value) : 'None'}
                           </strong>
                         </div>
                         <div>
-                          <span className="text-slate-500">Correct Answer: </span>
-                          <strong className="text-emerald-700">
+                          <span className="text-slate-500 dark:text-slate-400">Correct Answer: </span>
+                          <strong className="tnum text-emerald-700 dark:text-emerald-400">
                             {q.answer && 'value' in q.answer
                               ? q.answer.value
                               : q.answer && 'min' in q.answer
@@ -473,8 +482,8 @@ export function ResultReviewClient({
 
                   {/* Worked Solution */}
                   {q.solution && (
-                    <div className="rounded-lg border border-brand-100 bg-brand-50/50 p-4 text-xs text-slate-800">
-                      <div className="mb-1 flex items-center gap-1.5 font-bold text-brand-900">
+                    <div className="rounded-lg border border-brand-100 bg-brand-50/50 p-4 text-xs text-slate-800 dark:border-brand-900 dark:bg-brand-950/40 dark:text-slate-200">
+                      <div className="mb-1 flex items-center gap-1.5 font-bold text-brand-900 dark:text-brand-300">
                         <Sparkles className="size-3.5 text-accent-500" />
                         Step-by-Step Solution:
                       </div>
@@ -496,8 +505,8 @@ export function ResultReviewClient({
           })}
 
           {filteredQuestions.length === 0 && (
-            <div className="p-8 text-center text-xs text-slate-500">
-              No questions found with current filter selections.
+            <div className="p-8 text-center text-xs text-slate-500 dark:text-slate-400">
+              No questions match these filters.
             </div>
           )}
         </div>

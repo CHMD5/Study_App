@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { profiles } from '@/db/schema';
 import { verifyPassword } from './password';
@@ -25,7 +25,8 @@ export async function authenticate(username: string, password: string): Promise<
 
   if (!user || !user.isActive || !user.canLogin) {
     // Still spend the time hashing, so a missing user is not measurably faster
-    // than a wrong password.
+    // than a wrong password. verifyPassword falls back to a real dummy hash for
+    // a null `stored`, so this genuinely runs scrypt rather than returning early.
     await verifyPassword(password, null);
     return null;
   }

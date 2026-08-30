@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Alert, Button, buttonClass, Card, CardBody, CardHeader, CardTitle, Input, Label, Select, Spinner, Textarea } from '@/components/ui';
+import { fromLocalInputValue } from '@/lib/datetime';
 
 export default function CreateTestPage() {
   const router = useRouter();
@@ -38,8 +39,8 @@ export default function CreateTestPage() {
           title: title.trim(),
           description: description.trim() || null,
           durationS: durationMinutes * 60,
-          opensAt: opensAt ? new Date(opensAt).toISOString() : null,
-          closesAt: closesAt ? new Date(closesAt).toISOString() : null,
+          opensAt: fromLocalInputValue(opensAt),
+          closesAt: fromLocalInputValue(closesAt),
           maxAttempts: Number(maxAttempts),
           shuffleQuestions,
           shuffleOptions,

@@ -1,8 +1,8 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { apiTeacher } from '@/lib/auth';
 import { HttpError, json, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
-import { attempts, profiles, testQuestions, tests } from '@/db/schema';
+import { tests } from '@/db/schema';
 
 type Ctx = { params: Promise<{ id: string }> };
 

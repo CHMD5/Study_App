@@ -6,6 +6,15 @@ import Link from 'next/link';
 import { Clock, HelpCircle, Play } from 'lucide-react';
 import { Alert, Button, Card, CardBody, CardHeader, CardTitle, Spinner } from '@/components/ui';
 
+/** One distinct marking rule in this test, and how many questions use it. */
+export type MarkingRule = {
+  types: string[];
+  correct: number;
+  wrong: number;
+  unattempted: number;
+  questionCount: number;
+};
+
 interface TestInstructionClientProps {
   test: {
     id: string;
@@ -15,10 +24,22 @@ interface TestInstructionClientProps {
     questionCount: number;
     maxAttempts: number;
   };
+  /** Derived from test_questions — the instructions used to hardcode +4/−1/0. */
+  markingRules: MarkingRule[];
+  subjectCounts: { subject: string; count: number }[];
+  attemptsUsed: number;
   studentName: string;
 }
 
-export function TestInstructionClient({ test, studentName }: TestInstructionClientProps) {
+const fmt = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2));
+
+export function TestInstructionClient({
+  test,
+  markingRules,
+  subjectCounts,
+  attemptsUsed,
+  studentName,
+}: TestInstructionClientProps) {
   const router = useRouter();
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -32,18 +53,24 @@ export function TestInstructionClient({ test, studentName }: TestInstructionClie
     setError(null);
 
     try {
-      const res = await fetch(`/api/tests/${test.id}/start`, {
+      // The attempt-creation route is /attempts, not /start. This pointed at a
+      // route that has never existed, so every "I am ready to begin" 404'd,
+      // Next answered with its HTML error page, and res.json() threw on the
+      // leading '<' — surfacing to the student as a raw JSON parser error.
+      const res = await fetch(`/api/tests/${test.id}/attempts`, {
         method: 'POST',
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.message || 'Failed to start test attempt');
+      // Guard the parse too: a non-JSON error response should not become an
+      // unintelligible SyntaxError in the alert box.
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.attemptId) {
+        throw new Error(data?.message || `Could not start this test (HTTP ${res.status}). Please try again.`);
       }
 
       router.push(`/student/attempts/${data.attemptId}`);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start test attempt');
       setLoading(false);
     }
   };
@@ -75,6 +102,11 @@ export function TestInstructionClient({ test, studentName }: TestInstructionClie
             <HelpCircle className="size-4 text-brand-700 dark:text-brand-400" />
             <span>Questions: <strong>{test.questionCount}</strong></span>
           </div>
+          <div className="flex items-center gap-1.5 rounded-md bg-slate-50 px-3 py-1.5 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+            <span>
+              Attempt <strong>{attemptsUsed + 1}</strong> of <strong>{test.maxAttempts}</strong>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -101,7 +133,8 @@ export function TestInstructionClient({ test, studentName }: TestInstructionClie
           <div>
             <h3 className="font-semibold text-slate-900 dark:text-slate-100">2. Question Palette & Color Codes</h3>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-              The question palette displayed on the right of the screen will show the status of each question using one of the following symbols:
+              The question palette — on the right of the screen, or behind the <strong>Palette</strong> button on a
+              phone — shows the status of each question:
             </p>
 
             <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
@@ -148,11 +181,57 @@ export function TestInstructionClient({ test, studentName }: TestInstructionClie
 
           <div>
             <h3 className="font-semibold text-slate-900 dark:text-slate-100">3. Marking Scheme</h3>
-            <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-600 dark:text-slate-400">
-              <li><strong>+4.00 Marks</strong> for each correct response.</li>
-              <li><strong>-1.00 Marks</strong> for each incorrect response (Negative marking).</li>
-              <li><strong>0.00 Marks</strong> for unattempted questions.</li>
-            </ul>
+            {markingRules.length === 0 ? (
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                No marks have been configured for this test yet.
+              </p>
+            ) : (
+              <div className="mt-2 overflow-hidden rounded-md border border-slate-200 dark:border-slate-800">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950 dark:text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Question type</th>
+                      <th className="px-3 py-2 text-right font-semibold">Correct</th>
+                      <th className="px-3 py-2 text-right font-semibold">Incorrect</th>
+                      <th className="px-3 py-2 text-right font-semibold">Unattempted</th>
+                      <th className="px-3 py-2 text-right font-semibold">Questions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {markingRules.map((rule, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-2 font-medium text-slate-800 dark:text-slate-200">
+                          {rule.types.map((t) => (t === 'mcq' ? 'MCQ' : 'Numerical')).join(' & ')}
+                        </td>
+                        <td className="tnum px-3 py-2 text-right font-semibold text-emerald-700 dark:text-emerald-400">
+                          {fmt(rule.correct)}
+                        </td>
+                        <td className="tnum px-3 py-2 text-right font-semibold text-red-600 dark:text-red-400">
+                          {fmt(rule.wrong)}
+                        </td>
+                        <td className="tnum px-3 py-2 text-right text-slate-600 dark:text-slate-400">
+                          {fmt(rule.unattempted)}
+                        </td>
+                        <td className="tnum px-3 py-2 text-right text-slate-600 dark:text-slate-400">
+                          {rule.questionCount}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {subjectCounts.length > 1 ? (
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                Sections:{' '}
+                {subjectCounts.map((s, i) => (
+                  <span key={s.subject}>
+                    {i > 0 ? ' · ' : ''}
+                    <span className="capitalize">{s.subject}</span> ({s.count})
+                  </span>
+                ))}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -167,10 +246,11 @@ export function TestInstructionClient({ test, studentName }: TestInstructionClie
           </div>
 
           <div className="rounded-md border border-brand-200 bg-brand-50 p-3.5 text-xs text-brand-900 dark:border-brand-800 dark:bg-brand-950/60 dark:text-brand-200">
-            <p className="font-semibold">Offline Disconnect Protection:</p>
+            <p className="font-semibold">If your connection drops</p>
             <p className="mt-0.5">
-              If your internet connection drops during the exam, you can continue answering uninterrupted.
-              All responses are stored in your browser and automatically reconciled when reconnected.
+              You can keep answering. Your responses are saved on this device and re-sync automatically when you are
+              back online — the header shows <strong>Saved</strong>, <strong>Saving…</strong> or{' '}
+              <strong>Not synced</strong> so you always know where they stand. Keep this tab open until you submit.
             </p>
           </div>
 

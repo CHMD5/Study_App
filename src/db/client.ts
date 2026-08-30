@@ -67,12 +67,11 @@ async function initialise(): Promise<{ pg: PGlite; db: Db }> {
   // all its work and then hang forever instead of exiting. Also stashed on the
   // global cache so an explicit closeDb() can clear it deterministically.
   //
-  // The interval callback itself is still fire-and-forget relative to
-  // whatever request handler might be mid-query when it fires every 60s — the
-  // same crash risk in principle, just a much narrower window in practice
-  // than the guaranteed-immediate boot-time race fixed above. Worth hardening
-  // (e.g. routing every query through `pg.runExclusive`) before this app ever
-  // serves more than one local user.
+  // The interval callback used to be fire-and-forget relative to whatever
+  // request handler might be mid-query when it fired — the same crash risk as
+  // the boot-time race above, just a narrower window. sweepExpiredAttempts now
+  // takes the db lock (src/lib/db-lock.ts), as does every transaction, so the
+  // sweep can no longer interleave with either.
   globalForDb.__vtpSweepTimer = setInterval(() => {
     sweepExpiredAttempts().catch((err) => console.error('[sweep] failed', err));
   }, SWEEP_INTERVAL_MS).unref();

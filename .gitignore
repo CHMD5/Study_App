@@ -13,6 +13,10 @@
 next-env.d.ts
 *.tsbuildinfo
 
+# Dev server output, captured ad hoc; not source
+dev_out.log
+*.log
+
 # Generated at dev/build time by scripts/copy-pdf-worker.mjs
 /public/pdf.worker.min.mjs
 

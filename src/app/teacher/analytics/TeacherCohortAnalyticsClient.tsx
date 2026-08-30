@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { Award, Layers, Sparkles, TrendingUp, Users } from 'lucide-react';
-import { Alert, Badge, buttonClass, Card, CardBody, CardHeader, CardTitle, Spinner } from '@/components/ui';
+
+import { Award, Layers, Users } from 'lucide-react';
+import { Alert, Badge, Card, CardBody, Spinner } from '@/components/ui';
 
 interface CohortData {
   metrics: {

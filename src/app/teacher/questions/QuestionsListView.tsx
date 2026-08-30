@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Trash2 } from 'lucide-react';
-import { Badge, Card, EmptyState, Input, Select, Spinner } from '@/components/ui';
+import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { Alert, Badge, Button, Card, EmptyState, Input, Select, Spinner } from '@/components/ui';
 import type { Question } from '@/db/schema';
 
 const SUBJECTS = ['physics', 'chemistry', 'maths'] as const;
@@ -15,15 +15,28 @@ const STATUS_TONE = { draft: 'amber', verified: 'green', archived: 'slate' } as 
 
 export function QuestionsListView() {
   const initialParams = useSearchParams();
-  const [subject, setSubject] = useState('');
-  const [status, setStatus] = useState('');
-  const [type, setType] = useState('');
-  const [search, setSearch] = useState('');
+
+  // Seed every filter from the URL, not just paperId. The Overview page links
+  // to /teacher/questions?status=verified, and that parameter used to be read
+  // and then ignored, so the tile silently did nothing.
+  const [subject, setSubject] = useState(initialParams.get('subject') ?? '');
+  const [status, setStatus] = useState(initialParams.get('status') ?? '');
+  const [type, setType] = useState(initialParams.get('type') ?? '');
+  const [search, setSearch] = useState(initialParams.get('q') ?? '');
   const [paperId] = useState(initialParams.get('paperId') ?? '');
 
   const [rows, setRows] = useState<Question[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageCount, setPageCount] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Changing a filter must reset to page 1, or you land on an out-of-range page
+  // of the new result set.
+  useEffect(() => {
+    setPage(1);
+  }, [subject, status, type, search, paperId]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -32,20 +45,31 @@ export function QuestionsListView() {
     if (type) params.set('type', type);
     if (search) params.set('q', search);
     if (paperId) params.set('paperId', paperId);
+    params.set('page', String(page));
 
     setLoading(true);
     const handle = setTimeout(() => {
       fetch(`/api/questions?${params.toString()}`)
-        .then((r) => r.json())
+        .then(async (r) => {
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(body.message ?? 'Could not load questions.');
+          return body;
+        })
         .then((body) => {
           setRows(body.questions ?? []);
           setTotal(body.total ?? 0);
+          setPageCount(body.pageCount ?? 1);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : 'Could not load questions.');
+          setRows([]);
         })
         .finally(() => setLoading(false));
     }, 250); // debounce the free-text search
 
     return () => clearTimeout(handle);
-  }, [subject, status, type, search, paperId]);
+  }, [subject, status, type, search, paperId, page]);
 
   async function onDelete(q: Question) {
     if (!confirm(`Delete question ${q.humanCode ?? q.id}? This cannot be undone.`)) return;
@@ -55,9 +79,12 @@ export function QuestionsListView() {
       setTotal((t) => t - 1);
     } else {
       const body = await res.json().catch(() => ({}));
-      alert(body.message ?? 'Could not delete this question.');
+      setError(body.message ?? 'Could not delete this question.');
     }
   }
+
+  const first = total === 0 ? 0 : (page - 1) * 30 + 1;
+  const last = (page - 1) * 30 + rows.length;
 
   return (
     <div className="mt-6 space-y-4">
@@ -95,6 +122,8 @@ export function QuestionsListView() {
           />
         </div>
       </Card>
+
+      {error ? <Alert tone="red">{error}</Alert> : null}
 
       {loading ? (
         <div className="flex justify-center py-12">
@@ -141,15 +170,59 @@ export function QuestionsListView() {
               </li>
             ))}
           </ul>
-          <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-500">
-            Showing {rows.length} of {total}
-          </p>
+
+          {/* Pagination. The API has always paged at 30 and returned a total,
+              but nothing ever sent `page` — so the bank was capped at its first
+              30 questions and everything beyond was unreachable. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2 dark:border-slate-800">
+            <p className="tnum text-xs text-slate-400 dark:text-slate-500">
+              Showing {first}–{last} of {total}
+            </p>
+
+            {pageCount > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-3.5" />
+                  Previous
+                </Button>
+                <span className="tnum text-xs text-slate-500 dark:text-slate-400">
+                  Page {page} of {pageCount}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                  disabled={page >= pageCount}
+                  aria-label="Next page"
+                >
+                  Next
+                  <ChevronRight className="size-3.5" />
+                </Button>
+              </div>
+            )}
+          </div>
         </Card>
       )}
     </div>
   );
 }
 
+/** A one-line plain-text digest of a question body for the list. */
 function stripLatex(body: string): string {
-  return body.replace(/\[\[IMG:[^\]]+\]\]/g, '[image]').replace(/\$+/g, '').slice(0, 160);
+  return body
+    .replace(/\[\[IMG:[^\]]+\]\]/g, '[image]')
+    .replace(/\$\$?([^$]*)\$\$?/g, '$1')
+    // Reduce LaTeX commands to something readable rather than leaving raw
+    // `\frac{1}{2}` in the preview.
+    .replace(/\\[a-zA-Z]+\s*/g, ' ')
+    .replace(/[{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
 }

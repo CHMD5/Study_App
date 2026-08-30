@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation';
+
 import { requireSession } from '@/lib/auth';
 import { ResultReviewClient } from './ResultReviewClient';
 

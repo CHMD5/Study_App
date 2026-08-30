@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { apiTeacher } from '@/lib/auth';
-import { HttpError, json, withApi } from '@/lib/http';
+import { HttpError, isForeignKeyViolation, isUniqueViolation, json, withApi } from '@/lib/http';
 import { IngestPayload } from '@/lib/zod/ingest';
 import { getDb } from '@/db/client';
 import { papers, questions, type ExtractionMeta } from '@/db/schema';
+import { withDbLock } from '@/lib/db-lock';
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -45,7 +46,70 @@ export const POST = withApi<Ctx>(async (req, { params }) => {
     humanCode: `${paper.code}-${q.subject[0].toUpperCase()}-${String(q.sourceQno).padStart(3, '0')}`,
   }));
 
-  const inserted = await db.insert(questions).values(rows).returning({ id: questions.id, sourceQno: questions.sourceQno });
+  // ---------------------------------------------------------------------
+  // Re-ingest handling.
+  //
+  // human_code is deterministic (`<paperCode>-<S>-<qno>`), so pasting a
+  // corrected JSON for a paper that already has questions used to hit the
+  // UNIQUE constraint and surface as a bare 500 'internal_error' with no
+  // explanation of what went wrong or how to proceed.
+  //
+  // Default is now an explicit 409 naming the collision. `?mode=replace`
+  // deletes the paper's existing questions first — refused if any of them are
+  // already used in a test (test_questions is ON DELETE RESTRICT by design), so
+  // a live paper cannot be pulled out from under a test.
+  // ---------------------------------------------------------------------
+  const mode = new URL(req.url).searchParams.get('mode');
+  const codes = rows.map((r) => r.humanCode);
+
+  const clashes = await db
+    .select({ id: questions.id, humanCode: questions.humanCode })
+    .from(questions)
+    .where(inArray(questions.humanCode, codes));
+
+  if (clashes.length > 0 && mode !== 'replace') {
+    throw new HttpError(
+      409,
+      'already_ingested',
+      `${clashes.length} of these ${rows.length} question(s) were already ingested from this paper. Re-send with ?mode=replace to discard the existing ones and ingest afresh.`,
+      { existingCount: clashes.length, incomingCount: rows.length },
+    );
+  }
+
+  let inserted: { id: string; sourceQno: number | null }[] = [];
+
+  try {
+    await withDbLock(async () => {
+      await db.transaction(async (tx) => {
+        if (mode === 'replace') {
+          // Scoped to this paper, not to the colliding codes, so a re-ingest
+          // that renumbers questions doesn't leave the old ones orphaned.
+          await tx.delete(questions).where(eq(questions.paperId, paperId));
+        }
+
+        inserted = await tx
+          .insert(questions)
+          .values(rows)
+          .returning({ id: questions.id, sourceQno: questions.sourceQno });
+      });
+    });
+  } catch (err) {
+    if (isForeignKeyViolation(err)) {
+      throw new HttpError(
+        409,
+        'questions_in_use',
+        'One or more of this paper’s existing questions are already used in a test and cannot be replaced. Remove them from their test(s) first.',
+      );
+    }
+    if (isUniqueViolation(err)) {
+      throw new HttpError(
+        409,
+        'duplicate_question_code',
+        'Some of these questions collide with existing ones. Re-send with ?mode=replace to overwrite this paper’s questions.',
+      );
+    }
+    throw err;
+  }
 
   // Seed each question's image placeholders as unresolved rows would require a
   // question_images entry, but that table's NOT NULL storage_path means a

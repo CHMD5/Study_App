@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { apiSession } from '@/lib/auth';
+import { apiTeacher } from '@/lib/auth';
 import { HttpError, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
 import { papers } from '@/db/schema';
@@ -16,12 +16,15 @@ type Ctx = { params: Promise<{ id: string }> };
  * response shape is identical either way, so the crop tool (stage 3) is built
  * against a route contract, not a storage mechanism.
  *
- * Any signed-in user may read a paper's PDF — teachers use it directly for
- * review; students never have a path to this route because nothing in the
- * student UI links to it.
+ * TEACHERS ONLY. This used to accept any signed-in session on the reasoning
+ * that "students never have a path to this route because nothing in the student
+ * UI links to it" — which is security by obscurity, not access control. The
+ * file being streamed is the original question paper; a student sitting a live
+ * test could fetch /api/papers/<any-uuid>/pdf and read ahead. Nothing in the
+ * student UI needs this route, so the guard costs nothing.
  */
 export const GET = withApi<Ctx>(async (_req, { params }) => {
-  await apiSession();
+  await apiTeacher();
   const { id } = await params;
 
   const db = await getDb();

@@ -65,8 +65,10 @@ export async function issueSession(session: Session): Promise<void> {
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_TTL_SECONDS,
-    // No `secure` flag: the local build is served over plain http on localhost,
-    // and a secure cookie would simply never be sent. Set it in production.
+    // The local build is served over plain http on localhost, where a secure
+    // cookie would simply never be sent. Anything not-development gets it, and
+    // COOKIE_SECURE=true forces it on for a local https reverse proxy.
+    secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
   });
 }
 
