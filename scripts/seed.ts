@@ -47,6 +47,7 @@ async function main() {
   const passwordHash = await hashPassword('112345');
 
   await upsertProfile(db, {
+    id: '3677e721-0974-438b-a623-29b31ecf8e84',
     username: 'Teacher',
     fullName: 'Demo Teacher',
     email: 'teacher@local.vidyatest.dev',
@@ -56,6 +57,7 @@ async function main() {
   });
 
   await upsertProfile(db, {
+    id: '8670658d-a920-4fb5-9623-e48d7921f30f',
     username: 'Student',
     fullName: 'Demo Student',
     email: 'student@local.vidyatest.dev',
@@ -342,6 +344,7 @@ function mulberry32(seed: number): () => number {
 async function upsertProfile(
   db: Awaited<ReturnType<typeof getDb>>,
   values: {
+    id?: string;
     username: string;
     fullName: string;
     email: string;

@@ -162,21 +162,93 @@ export async function loginWithPhone(
 export async function requireSession(): Promise<Session> {
   const session = await getSession();
   if (!session) redirect('/login');
-  return session;
+
+  const db = await getDb();
+  const [user] = await db
+    .select({
+      id: profiles.id,
+      username: profiles.username,
+      fullName: profiles.fullName,
+      role: profiles.role,
+      isActive: profiles.isActive,
+      canLogin: profiles.canLogin,
+    })
+    .from(profiles)
+    .where(sql`${profiles.id} = ${session.userId}`)
+    .limit(1);
+
+  if (!user || !user.isActive || !user.canLogin) {
+    redirect(session.role === 'teacher' ? '/SRSMA' : '/login');
+  }
+
+  return {
+    userId: user.id,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+  };
 }
 
 export async function requireTeacher(): Promise<Session> {
   const session = await getSession();
   if (!session) redirect('/SRSMA');
   if (session.role !== 'teacher') redirect('/student');
-  return session;
+
+  const db = await getDb();
+  const [user] = await db
+    .select({
+      id: profiles.id,
+      username: profiles.username,
+      fullName: profiles.fullName,
+      role: profiles.role,
+      isActive: profiles.isActive,
+      canLogin: profiles.canLogin,
+    })
+    .from(profiles)
+    .where(sql`${profiles.id} = ${session.userId}`)
+    .limit(1);
+
+  if (!user || !user.isActive || !user.canLogin || user.role !== 'teacher') {
+    redirect('/SRSMA');
+  }
+
+  return {
+    userId: user.id,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+  };
 }
 
 export async function requireStudent(): Promise<Session> {
   const session = await getSession();
   if (!session) redirect('/login');
   if (session.role !== 'student') redirect('/teacher');
-  return session;
+
+  const db = await getDb();
+  const [user] = await db
+    .select({
+      id: profiles.id,
+      username: profiles.username,
+      fullName: profiles.fullName,
+      role: profiles.role,
+      isActive: profiles.isActive,
+      canLogin: profiles.canLogin,
+    })
+    .from(profiles)
+    .where(sql`${profiles.id} = ${session.userId}`)
+    .limit(1);
+
+  if (!user || !user.isActive || !user.canLogin || user.role !== 'student') {
+    redirect('/login');
+  }
+
+  return {
+    userId: user.id,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+  };
 }
 
 /** Where a freshly logged-in user belongs. */
@@ -191,7 +263,31 @@ export function homeFor(role: Role): string {
 export async function apiSession(): Promise<Session> {
   const session = await getSession();
   if (!session) throw new HttpError(401, 'unauthenticated', 'Sign in to continue.');
-  return session;
+
+  const db = await getDb();
+  const [user] = await db
+    .select({
+      id: profiles.id,
+      username: profiles.username,
+      fullName: profiles.fullName,
+      role: profiles.role,
+      isActive: profiles.isActive,
+      canLogin: profiles.canLogin,
+    })
+    .from(profiles)
+    .where(sql`${profiles.id} = ${session.userId}`)
+    .limit(1);
+
+  if (!user || !user.isActive || !user.canLogin) {
+    throw new HttpError(401, 'unauthenticated', 'Session invalid or user account inactive. Please sign in again.');
+  }
+
+  return {
+    userId: user.id,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+  };
 }
 
 export async function apiTeacher(): Promise<Session> {
