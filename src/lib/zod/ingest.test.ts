@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IngestPayload } from './ingest';
+import { IngestPayload, IngestSolutionsPayload } from './ingest';
 
 const validQuestion = {
   sourceQno: 12,
@@ -20,6 +20,55 @@ describe('IngestPayload', () => {
   it('accepts a well-formed paper', () => {
     const result = IngestPayload.safeParse({ questions: [validQuestion] });
     expect(result.success).toBe(true);
+  });
+
+  it('accepts biology as a subject', () => {
+    const result = IngestPayload.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          subject: 'biology',
+          body: 'Which cell organelle is known as the powerhouse of the cell?',
+          options: [
+            { key: 'A', body: 'Mitochondria' },
+            { key: 'B', body: 'Ribosome' },
+            { key: 'C', body: 'Golgi apparatus' },
+            { key: 'D', body: 'Nucleus' },
+          ],
+          imagePlaceholders: [],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts questions with answer and solution (both mode)', () => {
+    const result = IngestPayload.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          answer: 'A',
+          solution: 'Mitochondria produce ATP through cellular respiration.',
+          imagePlaceholders: [{ id: 'p12_1', hint: 'inclined plane with sphere at top' }],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts questions with sourcePage', () => {
+    const result = IngestPayload.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          sourcePage: 3,
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questions[0].sourcePage).toBe(3);
+    }
   });
 
   it('rejects an unknown type enum value (LLD §5.1 example)', () => {
@@ -112,8 +161,71 @@ describe('IngestPayload', () => {
     expect(result.success).toBe(false);
   });
 
+  it('normalizes and accepts placeholder ids wrapped in [[IMG:...]]', () => {
+    const result = IngestPayload.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          body: 'Figure showing triangle: [[IMG:q5_1]]',
+          imagePlaceholders: [{ id: '[[IMG:q5_1]]', hint: 'Right triangle' }],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questions[0].imagePlaceholders[0].id).toBe('q5_1');
+    }
+  });
+
   it('rejects an empty questions array', () => {
     const result = IngestPayload.safeParse({ questions: [] });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('IngestSolutionsPayload', () => {
+  it('accepts a valid solutions payload', () => {
+    const result = IngestSolutionsPayload.safeParse({
+      solutions: [
+        {
+          sourceQno: 1,
+          sourcePage: 5,
+          subject: 'biology',
+          answer: 'A',
+          solution: 'Step 1: Cell biology defines mitochondria as the powerhouse. [[IMG:sol1_1]]',
+          imagePlaceholders: [{ id: 'sol1_1', hint: 'mitochondria diagram' }],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.solutions[0].sourcePage).toBe(5);
+    }
+  });
+
+  it('rejects an undeclared placeholder in solution', () => {
+    const result = IngestSolutionsPayload.safeParse({
+      solutions: [
+        {
+          sourceQno: 1,
+          solution: 'Solution with [[IMG:sol1_undeclared]]',
+          imagePlaceholders: [],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an unclosed dollar in solution', () => {
+    const result = IngestSolutionsPayload.safeParse({
+      solutions: [
+        {
+          sourceQno: 1,
+          solution: 'Unclosed math $\\frac{1}{2} without close',
+          imagePlaceholders: [],
+        },
+      ],
+    });
     expect(result.success).toBe(false);
   });
 });

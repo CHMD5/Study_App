@@ -40,7 +40,15 @@ export function withApi<Ctx>(handler: ApiHandler<Ctx>): ApiHandler<Ctx> {
         return NextResponse.json({ error: 'validation_failed', issues: formatZodIssues(err) }, { status: 422 });
       }
       console.error('[api] unhandled error', err);
-      return NextResponse.json({ error: 'internal_error' }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: 'internal_error',
+          message: err instanceof Error ? err.message : String(err),
+          cause: (err as any)?.cause ? String((err as any).cause) : undefined,
+          stack: err instanceof Error ? err.stack : undefined,
+        },
+        { status: 500 },
+      );
     }
   };
 }

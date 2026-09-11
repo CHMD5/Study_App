@@ -99,19 +99,9 @@ function normalise(url: string): string {
 }
 
 /**
- * Known-broken references, deliberately not fixed yet.
- *
- * These are real bugs. They live here rather than being silently skipped so
- * they stay visible in the test output and have to be consciously removed.
- * Everything listed belongs to the analytics surface, which is still in
- * progress — see AUDIT-AND-BUG-REPORT.md items marked [WIP].
- *
- * `/api/analytics/student` (A-2): the handler is at
- * src/app/api/analytics/student/me/route.ts. The caller in
- * StudentAnalyticsClient.tsx omits the `/me`, so the Student Analytics page
- * 404s on every load. One-word fix when that surface is picked up.
+ * Known-broken references allowlist (empty now that A-1 and A-2 are fixed).
  */
-const KNOWN_BROKEN = new Set(['/api/analytics/student']);
+const KNOWN_BROKEN = new Set<string>();
 
 describe('API route references', () => {
   const routes = collectRoutes();

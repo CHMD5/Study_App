@@ -1,18 +1,13 @@
 import { z } from 'zod';
 
-/**
- * `IngestQuestion` — what Gemini (or any extraction LLM) produces, per LLD §6.
- * Deliberately does NOT include answer, difficulty, expectedTime, solution,
- * topic, or chapter — those are teacher-supplied afterward (LLD §6 rule 8).
- * A model that volunteers them anyway has those fields silently stripped by
- * `.strip()`ping this schema before staging, never trusted.
- *
- * Shared between the client (instant feedback before paste) and the server
- * (authoritative — LLD §5.1's all-or-nothing validation).
- */
-
 export const ImagePlaceholder = z.object({
-  id: z.string().min(1, 'placeholder id is required'),
+  id: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      const match = val.trim().match(/^\[\[IMG:\s*([^\]]+)\s*\]\]$/);
+      return match ? match[1].trim() : val.trim();
+    }
+    return val;
+  }, z.string().min(1, 'placeholder id is required')),
   hint: z.string().min(1, 'a factual hint is required for every image placeholder'),
 });
 
@@ -24,10 +19,13 @@ export const IngestOption = z.object({
 export const IngestQuestion = z
   .object({
     sourceQno: z.number().int().positive(),
-    subject: z.enum(['physics', 'chemistry', 'maths']),
+    sourcePage: z.number().int().positive().nullable().optional(),
+    subject: z.enum(['physics', 'chemistry', 'maths', 'biology']),
     type: z.enum(['mcq', 'integer']),
     body: z.string().min(1, 'question body cannot be empty'),
     options: z.array(IngestOption).default([]),
+    answer: z.string().nullable().optional(),
+    solution: z.string().nullable().optional(),
     imagePlaceholders: z.array(ImagePlaceholder).default([]),
     uncertain: z.array(z.string()).default([]),
   })
@@ -58,13 +56,9 @@ export const IngestQuestion = z
       dupeKeys.add(opt.key);
     }
 
-    // Every [[IMG:id]] token referenced in the body OR an option's body must
-    // appear in imagePlaceholders, and vice versa — an unresolved or orphaned
-    // placeholder is caught here, before staging. A match-the-column question
-    // can put a diagram inside an option (LLD §6 rule 6), so options are
-    // scanned too, not just body — a token that only ever appeared inside an
-    // option used to pass validation silently.
-    const allText = [q.body, ...q.options.map((o) => o.body)];
+    // Every [[IMG:id]] token referenced in the body, option bodies, or solution must
+    // appear in imagePlaceholders, and vice versa.
+    const allText = [q.body, ...q.options.map((o) => o.body), q.solution ?? ''];
     const tokenIds = allText.flatMap((text) => [...text.matchAll(/\[\[IMG:([^\]]+)\]\]/g)].map((m) => m[1]));
     const declaredIds = new Set(q.imagePlaceholders.map((p) => p.id));
     for (const id of new Set(tokenIds)) {
@@ -72,7 +66,7 @@ export const IngestQuestion = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['imagePlaceholders'],
-          message: `[[IMG:${id}]] appears in the question but is not declared in imagePlaceholders`,
+          message: `[[IMG:${id}]] appears in the question or solution but is not declared in imagePlaceholders`,
         });
       }
     }
@@ -82,16 +76,22 @@ export const IngestQuestion = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['imagePlaceholders'],
-          message: `imagePlaceholders declares '${p.id}' but [[IMG:${p.id}]] does not appear in the body or any option`,
+          message: `imagePlaceholders declares '${p.id}' but [[IMG:${p.id}]] does not appear in the body, options, or solution`,
         });
       }
     }
 
-    // A crude but effective guard against rule-3 LaTeX escaping mistakes: an
-    // odd number of unescaped '$' delimiters means something won't render.
+    // LaTeX delimiter escaping check
     const dollarCount = (q.body.match(/(?<!\\)\$/g) ?? []).length;
     if (dollarCount % 2 !== 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['body'], message: 'unclosed $ delimiter' });
+    }
+
+    if (q.solution) {
+      const solDollarCount = (q.solution.match(/(?<!\\)\$/g) ?? []).length;
+      if (solDollarCount % 2 !== 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['solution'], message: 'unclosed $ delimiter in solution' });
+      }
     }
   });
 
@@ -105,5 +105,56 @@ export const IngestPayload = z.object({
   questions: z.array(IngestQuestion).min(1, 'no questions found in the pasted JSON'),
 });
 
+export const IngestSolutionItem = z
+  .object({
+    sourceQno: z.number().int().positive(),
+    sourcePage: z.number().int().positive().nullable().optional(),
+    subject: z.enum(['physics', 'chemistry', 'maths', 'biology']).optional(),
+    answer: z.string().nullable().optional(),
+    solution: z.string().min(1, 'solution cannot be empty'),
+    imagePlaceholders: z.array(ImagePlaceholder).default([]),
+    uncertain: z.array(z.string()).default([]),
+  })
+  .superRefine((s, ctx) => {
+    const tokenIds = [...s.solution.matchAll(/\[\[IMG:([^\]]+)\]\]/g)].map((m) => m[1]);
+    const declaredIds = new Set(s.imagePlaceholders.map((p) => p.id));
+    for (const id of new Set(tokenIds)) {
+      if (!declaredIds.has(id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['imagePlaceholders'],
+          message: `[[IMG:${id}]] appears in the solution but is not declared in imagePlaceholders`,
+        });
+      }
+    }
+    const tokenIdSet = new Set(tokenIds);
+    for (const p of s.imagePlaceholders) {
+      if (!tokenIdSet.has(p.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['imagePlaceholders'],
+          message: `imagePlaceholders declares '${p.id}' but [[IMG:${p.id}]] does not appear in the solution`,
+        });
+      }
+    }
+    const dollarCount = (s.solution.match(/(?<!\\)\$/g) ?? []).length;
+    if (dollarCount % 2 !== 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['solution'], message: 'unclosed $ delimiter in solution' });
+    }
+  });
+
+export const IngestSolutionsPayload = z.object({
+  paperId: z.string().uuid().optional(),
+  paperMeta: z
+    .object({
+      detectedTitle: z.string().nullable().optional(),
+      totalSolutionsFound: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  solutions: z.array(IngestSolutionItem).min(1, 'no solutions found in the pasted JSON'),
+});
+
 export type IngestQuestionT = z.infer<typeof IngestQuestion>;
 export type IngestPayloadT = z.infer<typeof IngestPayload>;
+export type IngestSolutionItemT = z.infer<typeof IngestSolutionItem>;
+export type IngestSolutionsPayloadT = z.infer<typeof IngestSolutionsPayload>;

@@ -98,6 +98,7 @@ export const GET = withApi<Ctx>(async (req, { params }) => {
     physics: { marks: 0, maxMarks: 0, correct: 0, total: 0 },
     chemistry: { marks: 0, maxMarks: 0, correct: 0, total: 0 },
     maths: { marks: 0, maxMarks: 0, correct: 0, total: 0 },
+    biology: { marks: 0, maxMarks: 0, correct: 0, total: 0 },
   };
 
   const reviewItems = qIds.map((qid, index) => {

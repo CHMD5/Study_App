@@ -8,22 +8,27 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Crop,
+  FileText,
   Filter,
   ImagePlus,
   Navigation,
   Search,
   Sparkles,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import {
   Alert,
   Badge,
   Button,
+  ConfirmDialog,
   Input,
   Label,
   Select,
   Textarea,
+  useToast,
 } from '@/components/ui';
 import { QuestionBody } from '@/components/Katex';
 import { PdfCropViewer } from '@/components/pdf/PdfCropViewer';
@@ -46,6 +51,7 @@ export function PaperVerifyStudio({
   initialQuestions: Question[];
   initialImages: QuestionImage[];
 }) {
+  const { toast } = useToast();
   const [paper] = useState(initialPaper);
   const [questions, setQuestions] = useState<Question[]>(initialQuestions);
   const [images, setImages] = useState<QuestionImage[]>(initialImages);
@@ -53,6 +59,12 @@ export function PaperVerifyStudio({
   // Armed placeholder state for cropping
   const [armed, setArmed] = useState<{ questionId: string; placeholderId: string; sourceQno: number | null } | null>(null);
   const [cropping, setCropping] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Question | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Synchronized split-view navigation: jump PDF to specific page
+  const [targetPdfPage, setTargetPdfPage] = useState<number | null>(null);
+  const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
 
   // Filters & Search
   const [filterNeedsImage, setFilterNeedsImage] = useState(false);
@@ -68,37 +80,34 @@ export function PaperVerifyStudio({
 
   // Compute enriched question metadata
   const enrichedQuestions: QuestionWithImages[] = useMemo(() => {
-    const imagesByQ = new Map<string, QuestionImage[]>();
-    for (const img of images) {
-      const list = imagesByQ.get(img.questionId) ?? [];
-      list.push(img);
-      imagesByQ.set(img.questionId, list);
-    }
-
     return questions.map((q) => {
-      const qImages = imagesByQ.get(q.id) ?? [];
-      const imageMap = new Map<string, QuestionImage>();
+      const imageTokens = extractAllImageTokens(q.body, (q.options ?? []).map((o) => o.body));
+
+      const qImages = images.filter((img) => img.questionId === q.id);
+      const resolvedImageMap = new Map<string, QuestionImage>();
       for (const img of qImages) {
-        imageMap.set(img.placeholderId, img);
+        resolvedImageMap.set(img.placeholderId, img);
       }
 
-      const tokens = extractAllImageTokens(q.body, (q.options ?? []).map((o) => o.body));
-      const unresolved = tokens.filter((t) => !imageMap.has(t));
+      const unresolvedTokens = imageTokens.filter((token) => !resolvedImageMap.has(token));
 
       return {
         ...q,
-        imageTokens: tokens,
-        resolvedImageMap: imageMap,
-        unresolvedTokens: unresolved,
+        imageTokens,
+        resolvedImageMap,
+        unresolvedTokens,
       };
     });
   }, [questions, images]);
 
   // Summary counts
+  const needsImageQuestions = useMemo(() => {
+    return enrichedQuestions.filter((q) => q.unresolvedTokens.length > 0);
+  }, [enrichedQuestions]);
+
   const totalCount = enrichedQuestions.length;
   const verifiedCount = enrichedQuestions.filter((q) => q.status === 'verified').length;
   const draftCount = enrichedQuestions.filter((q) => q.status === 'draft').length;
-  const needsImageQuestions = enrichedQuestions.filter((q) => q.unresolvedTokens.length > 0);
   const needsImageCount = needsImageQuestions.length;
 
   // Filtered questions list
@@ -109,9 +118,11 @@ export function PaperVerifyStudio({
       if (filterStatus !== 'all' && q.status !== filterStatus) return false;
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        const bodyMatch = q.body.toLowerCase().includes(query);
-        const codeMatch = (q.humanCode ?? '').toLowerCase().includes(query);
-        if (!bodyMatch && !codeMatch) return false;
+        const matchesBody = q.body.toLowerCase().includes(query);
+        const matchesCode = q.humanCode?.toLowerCase().includes(query) ?? false;
+        const matchesQno = q.sourceQno?.toString().includes(query) ?? false;
+        const matchesChapter = q.chapter?.toLowerCase().includes(query) ?? false;
+        if (!matchesBody && !matchesCode && !matchesQno && !matchesChapter) return false;
       }
       return true;
     });
@@ -120,7 +131,7 @@ export function PaperVerifyStudio({
   // Jump to next question needing image
   function jumpToNextMissingImage() {
     if (needsImageQuestions.length === 0) {
-      alert('All questions have their images resolved!');
+      toast.info('All questions have their images resolved!');
       return;
     }
 
@@ -141,6 +152,10 @@ export function PaperVerifyStudio({
         placeholderId: placeholder,
         sourceQno: targetQ.sourceQno,
       });
+      setSelectedQuestionId(targetQ.id);
+      if (targetQ.sourcePage) {
+        setTargetPdfPage(targetQ.sourcePage);
+      }
 
       // Scroll question card into view
       const el = questionCardRefs.current[targetQ.id];
@@ -152,7 +167,10 @@ export function PaperVerifyStudio({
 
   // Handle crop from PDF
   async function handleCrop({ sourcePage, cropRect, blob }: { sourcePage: number; cropRect: CropRect; blob: Blob }) {
-    if (!armed) return;
+    if (!armed) {
+      toast.info('Please click an image placeholder or "Crop" on a question before cropping from the PDF.');
+      return;
+    }
     setCropping(true);
     try {
       const form = new FormData();
@@ -168,6 +186,7 @@ export function PaperVerifyStudio({
           ...prev.filter((i) => !(i.questionId === armed.questionId && i.placeholderId === armed.placeholderId)),
           newImg,
         ]);
+        toast.success(`Saved image [[IMG:${armed.placeholderId}]]`);
 
         // If this question has more unresolved images, arm the next one, otherwise clear
         const currentQ = enrichedQuestions.find((q) => q.id === armed.questionId);
@@ -183,7 +202,7 @@ export function PaperVerifyStudio({
         }
       } else {
         const body = await res.json().catch(() => ({}));
-        alert(body.message ?? 'Image crop upload failed.');
+        toast.error(body.message ?? 'Image crop upload failed.');
       }
     } finally {
       setCropping(false);
@@ -205,15 +224,35 @@ export function PaperVerifyStudio({
           ...prev.filter((i) => !(i.questionId === questionId && i.placeholderId === placeholderId)),
           newImg,
         ]);
+        toast.success(`Uploaded image [[IMG:${placeholderId}]]`);
         if (armed?.questionId === questionId && armed?.placeholderId === placeholderId) {
           setArmed(null);
         }
       } else {
         const body = await res.json().catch(() => ({}));
-        alert(body.message ?? 'Image upload failed.');
+        toast.error(body.message ?? 'Image upload failed.');
       }
     } finally {
       setCropping(false);
+    }
+  }
+
+  // Handle delete image
+  async function handleDeleteImage(questionId: string, imageId: string, placeholderId: string) {
+    try {
+      const res = await fetch(`/api/questions/${questionId}/images/${imageId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setImages((prev) => prev.filter((i) => i.id !== imageId));
+        if (armed?.questionId === questionId && armed?.placeholderId === placeholderId) {
+          setArmed(null);
+        }
+        toast.success(`Removed image [[IMG:${placeholderId}]]`);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.message ?? 'Could not delete image.');
+      }
+    } catch {
+      toast.error('Network error deleting image.');
     }
   }
 
@@ -224,37 +263,59 @@ export function PaperVerifyStudio({
       const body = await res.json();
       if (!res.ok) {
         const reasons = body.reasons?.join('\n• ') ?? body.message ?? 'Could not verify question.';
-        alert(`Cannot verify question yet:\n• ${reasons}`);
+        toast.warning(`Cannot verify question yet:\n• ${reasons}`);
         return;
       }
       // Update question state
       setQuestions((prev) => prev.map((q) => (q.id === questionId ? body : q)));
+      toast.success(`Question ${body.humanCode ?? body.id} verified!`);
     } catch {
-      alert('Could not connect to server.');
+      toast.error('Could not connect to server.');
     }
   }
 
   // Handle delete question
-  async function handleDeleteQuestion(q: Question) {
-    if (!confirm(`Delete question ${q.humanCode ?? q.id}? This cannot be undone.`)) return;
-    const res = await fetch(`/api/questions/${q.id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setQuestions((prev) => prev.filter((item) => item.id !== q.id));
-      setImages((prev) => prev.filter((img) => img.questionId !== q.id));
-      if (armed?.questionId === q.id) setArmed(null);
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(body.message ?? 'Could not delete question.');
+  async function performDeleteQuestion(q: Question) {
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/questions/${q.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setQuestions((prev) => prev.filter((item) => item.id !== q.id));
+        setImages((prev) => prev.filter((img) => img.questionId !== q.id));
+        if (armed?.questionId === q.id) setArmed(null);
+        toast.success(`Deleted question ${q.humanCode ?? q.id}`);
+        setDeleteTarget(null);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.message ?? 'Could not delete question.');
+      }
+    } catch {
+      toast.error('Network error: Could not delete question.');
+    } finally {
+      setDeleting(false);
     }
   }
 
   // Handle inline update
   function handleQuestionUpdated(updatedQ: Question) {
     setQuestions((prev) => prev.map((q) => (q.id === updatedQ.id ? updatedQ : q)));
+    toast.success('Question updated.');
   }
 
   return (
     <div className="flex h-full flex-col bg-slate-100 dark:bg-[#090d16]">
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) return performDeleteQuestion(deleteTarget);
+        }}
+        title="Delete Question"
+        description={`Are you sure you want to delete question ${deleteTarget?.humanCode ?? deleteTarget?.id}? This action cannot be undone.`}
+        confirmText="Delete Question"
+        tone="danger"
+        loading={deleting}
+      />
       {/* Top Studio Bar */}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2.5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-3">
@@ -315,6 +376,8 @@ export function PaperVerifyStudio({
             totalPages={paper.pdfPages}
             cropping={cropping}
             onCrop={handleCrop}
+            targetPage={targetPdfPage}
+            armedPlaceholder={armed?.placeholderId ?? null}
           />
 
           {/* Armed placeholder floating helper banner */}
@@ -405,6 +468,7 @@ export function PaperVerifyStudio({
                   <option value="physics">Physics</option>
                   <option value="chemistry">Chemistry</option>
                   <option value="maths">Maths</option>
+                  <option value="biology">Biology</option>
                 </Select>
 
                 <Select
@@ -460,10 +524,18 @@ export function PaperVerifyStudio({
                     ref={(el) => {
                       questionCardRefs.current[q.id] = el;
                     }}
+                    onClick={() => {
+                      setSelectedQuestionId(q.id);
+                      if (q.sourcePage) {
+                        setTargetPdfPage(q.sourcePage);
+                      }
+                    }}
                     className={cn(
-                      'rounded-xl border bg-white p-4 shadow-xs transition-all dark:bg-slate-900',
+                      'cursor-pointer rounded-xl border bg-white p-4 shadow-xs transition-all dark:bg-slate-900',
                       isArmed
                         ? 'border-accent-500 ring-2 ring-accent-400 dark:border-accent-500 dark:ring-accent-500/60'
+                        : selectedQuestionId === q.id
+                        ? 'border-brand-500 ring-2 ring-brand-300 dark:border-brand-500 dark:ring-brand-900/50'
                         : q.unresolvedTokens.length > 0
                         ? 'border-amber-300 dark:border-amber-700/60'
                         : 'border-slate-200 dark:border-slate-800',
@@ -475,7 +547,32 @@ export function PaperVerifyStudio({
                         <span className="flex size-7 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                           {q.sourceQno ? `Q${q.sourceQno}` : `#${idx + 1}`}
                         </span>
-                        <Badge tone={q.subject === 'physics' ? 'brand' : q.subject === 'chemistry' ? 'green' : 'amber'}>
+                        {q.sourcePage && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedQuestionId(q.id);
+                              setTargetPdfPage(q.sourcePage);
+                            }}
+                            className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-brand-950 dark:hover:text-brand-300 transition-colors"
+                            title={`Jump to Page ${q.sourcePage} in PDF/Doc`}
+                          >
+                            <FileText className="size-3" />
+                            <span>Page {q.sourcePage}</span>
+                          </button>
+                        )}
+                        <Badge
+                          tone={
+                            q.subject === 'physics'
+                              ? 'brand'
+                              : q.subject === 'chemistry'
+                                ? 'green'
+                                : q.subject === 'maths'
+                                  ? 'amber'
+                                  : 'purple'
+                          }
+                        >
                           {q.subject}
                         </Badge>
                         <Badge>{q.type.toUpperCase()}</Badge>
@@ -483,7 +580,7 @@ export function PaperVerifyStudio({
                         {q.difficulty && <Badge>D{q.difficulty}</Badge>}
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         <Button
                           size="sm"
                           variant={q.status === 'verified' ? 'secondary' : 'accent'}
@@ -506,7 +603,7 @@ export function PaperVerifyStudio({
 
                         <button
                           type="button"
-                          onClick={() => handleDeleteQuestion(q)}
+                          onClick={() => setDeleteTarget(q)}
                           className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                           title="Delete Question"
                         >
@@ -515,35 +612,116 @@ export function PaperVerifyStudio({
                       </div>
                     </div>
 
-                    {/* Missing Image Callout Warning */}
-                    {q.unresolvedTokens.length > 0 && (
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
-                        <span className="flex items-center gap-1.5">
-                          <ImagePlus className="size-4 text-amber-600 dark:text-amber-400" />
-                          <span>Image required for this question to verify:</span>
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {q.unresolvedTokens.map((placeholder) => {
-                            const thisArmed = armed?.questionId === q.id && armed?.placeholderId === placeholder;
+                    {/* Question Images & Diagrams Panel */}
+                    {q.imageTokens.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/90 p-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+                        <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          <span className="flex items-center gap-1.5">
+                            <Crop className="size-3.5 text-brand-600 dark:text-brand-400" />
+                            <span>Question Images ({q.imageTokens.length})</span>
+                          </span>
+                          {q.unresolvedTokens.length > 0 ? (
+                            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              {q.unresolvedTokens.length} missing image(s)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                              <CheckCircle2 className="size-3" /> All resolved
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          {q.imageTokens.map((token) => {
+                            const isResolved = q.resolvedImageMap.has(token);
+                            const img = q.resolvedImageMap.get(token);
+                            const thisArmed = armed?.questionId === q.id && armed?.placeholderId === token;
+                            const version = img?.createdAt ? new Date(img.createdAt).getTime() : Date.now();
+
                             return (
-                              <button
-                                key={placeholder}
-                                onClick={() =>
-                                  setArmed(
-                                    thisArmed
-                                      ? null
-                                      : { questionId: q.id, placeholderId: placeholder, sourceQno: q.sourceQno },
-                                  )
-                                }
+                              <div
+                                key={token}
                                 className={cn(
-                                  'rounded px-2 py-0.5 font-mono font-semibold transition-colors',
+                                  'flex items-center gap-2 rounded-md border bg-white px-2.5 py-1.5 shadow-2xs dark:bg-slate-800',
                                   thisArmed
-                                    ? 'bg-accent-500 text-slate-950 ring-2 ring-accent-400'
-                                    : 'bg-amber-200/80 text-amber-950 hover:bg-amber-300 dark:bg-amber-800 dark:text-amber-100',
+                                    ? 'border-accent-500 ring-2 ring-accent-400 dark:border-accent-500'
+                                    : isResolved
+                                    ? 'border-slate-200 dark:border-slate-700'
+                                    : 'border-amber-300 bg-amber-50/60 dark:border-amber-700/60 dark:bg-amber-950/30'
                                 )}
                               >
-                                {thisArmed ? '📷 Cropping: ' : 'Crop '} [[IMG:{placeholder}]]
-                              </button>
+                                {isResolved && (
+                                  <Image
+                                    src={`/api/files/images/${q.id}/${token}?v=${version}`}
+                                    alt={token}
+                                    width={36}
+                                    height={24}
+                                    unoptimized
+                                    className="h-6 w-9 rounded border border-slate-200 object-cover dark:border-slate-700"
+                                  />
+                                )}
+                                <span className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                  [[IMG:{token}]]
+                                </span>
+
+                                <div className="flex items-center gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setArmed(
+                                        thisArmed
+                                          ? null
+                                          : { questionId: q.id, placeholderId: token, sourceQno: q.sourceQno }
+                                      );
+                                      setSelectedQuestionId(q.id);
+                                      if (q.sourcePage) {
+                                        setTargetPdfPage(q.sourcePage);
+                                      }
+                                    }}
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold transition-colors',
+                                      thisArmed
+                                        ? 'bg-accent-500 text-slate-950 font-bold'
+                                        : isResolved
+                                        ? 'bg-slate-100 text-slate-700 hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
+                                        : 'bg-amber-500 text-slate-950 font-bold hover:bg-amber-400'
+                                    )}
+                                    title={thisArmed ? 'Cancel cropping' : isResolved ? 'Re-crop from source PDF' : 'Crop from source PDF'}
+                                  >
+                                    <Crop className="size-3" />
+                                    <span>{thisArmed ? 'Cropping…' : isResolved ? 'Re-crop' : 'Crop'}</span>
+                                  </button>
+
+                                  <label
+                                    className="cursor-pointer rounded bg-slate-100 p-1 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                                    title="Upload image file directly"
+                                  >
+                                    <Upload className="size-3" />
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                          handleDirectFileUpload(q.id, token, file);
+                                        }
+                                      }}
+                                    />
+                                  </label>
+
+                                  {isResolved && img && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteImage(q.id, img.id, token)}
+                                      className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                                      title="Remove this image"
+                                    >
+                                      <Trash2 className="size-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
                             );
                           })}
                         </div>
@@ -557,23 +735,29 @@ export function PaperVerifyStudio({
                         renderImage={(placeholderId) => {
                           const isResolved = q.resolvedImageMap.has(placeholderId);
                           const thisArmed = armed?.questionId === q.id && armed?.placeholderId === placeholderId;
+                          const img = q.resolvedImageMap.get(placeholderId);
+                          const version = img?.createdAt ? new Date(img.createdAt).getTime() : Date.now();
 
                           if (isResolved) {
                             return (
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
                                   setArmed(
                                     thisArmed
                                       ? null
                                       : { questionId: q.id, placeholderId, sourceQno: q.sourceQno },
-                                  )
-                                }
+                                  );
+                                  setSelectedQuestionId(q.id);
+                                  if (q.sourcePage) {
+                                    setTargetPdfPage(q.sourcePage);
+                                  }
+                                }}
                                 className="mx-1 inline-block align-middle"
-                                title="Click to re-crop"
+                                title="Click to re-crop this image from PDF"
                               >
                                 <Image
-                                  src={`/api/files/images/${q.id}/${placeholderId}`}
+                                  src={`/api/files/images/${q.id}/${placeholderId}?v=${version}`}
                                   alt={placeholderId}
                                   width={160}
                                   height={90}
@@ -590,13 +774,17 @@ export function PaperVerifyStudio({
                           return (
                             <button
                               type="button"
-                              onClick={() =>
+                              onClick={() => {
                                 setArmed(
                                   thisArmed
                                     ? null
                                     : { questionId: q.id, placeholderId, sourceQno: q.sourceQno },
-                                )
-                              }
+                                );
+                                setSelectedQuestionId(q.id);
+                                if (q.sourcePage) {
+                                  setTargetPdfPage(q.sourcePage);
+                                }
+                              }}
                               className={cn(
                                 'mx-1 inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 align-middle text-xs font-semibold',
                                 thisArmed
@@ -634,28 +822,56 @@ export function PaperVerifyStudio({
                                     body={opt.body}
                                     renderImage={(placeholderId) => {
                                       const isResolved = q.resolvedImageMap.has(placeholderId);
+                                      const thisArmed = armed?.questionId === q.id && armed?.placeholderId === placeholderId;
+                                      const img = q.resolvedImageMap.get(placeholderId);
+                                      const version = img?.createdAt ? new Date(img.createdAt).getTime() : Date.now();
+
                                       if (isResolved) {
                                         return (
-                                          <Image
-                                            src={`/api/files/images/${q.id}/${placeholderId}`}
-                                            alt={placeholderId}
-                                            width={120}
-                                            height={70}
-                                            unoptimized
-                                            className="inline-block max-h-20 w-auto rounded border border-slate-200 object-contain dark:border-slate-700"
-                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setArmed(
+                                                thisArmed
+                                                  ? null
+                                                  : { questionId: q.id, placeholderId, sourceQno: q.sourceQno },
+                                              );
+                                              setSelectedQuestionId(q.id);
+                                              if (q.sourcePage) {
+                                                setTargetPdfPage(q.sourcePage);
+                                              }
+                                            }}
+                                            className="mx-1 inline-block align-middle"
+                                            title="Click to re-crop this option image from PDF"
+                                          >
+                                            <Image
+                                              src={`/api/files/images/${q.id}/${placeholderId}?v=${version}`}
+                                              alt={placeholderId}
+                                              width={120}
+                                              height={70}
+                                              unoptimized
+                                              className={cn(
+                                                'inline-block max-h-20 w-auto rounded border bg-white object-contain dark:bg-slate-900',
+                                                thisArmed ? 'border-accent-500 ring-2 ring-accent-400' : 'border-slate-200 dark:border-slate-700',
+                                              )}
+                                            />
+                                          </button>
                                         );
                                       }
                                       return (
                                         <button
                                           type="button"
-                                          onClick={() =>
+                                          onClick={() => {
                                             setArmed({
                                               questionId: q.id,
                                               placeholderId,
                                               sourceQno: q.sourceQno,
-                                            })
-                                          }
+                                            });
+                                            setSelectedQuestionId(q.id);
+                                            if (q.sourcePage) {
+                                              setTargetPdfPage(q.sourcePage);
+                                            }
+                                          }}
                                           className="mx-1 inline-flex items-center gap-1 rounded border border-dashed border-amber-400 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-200"
                                         >
                                           <ImagePlus className="size-2.5" />
@@ -698,6 +914,7 @@ export function PaperVerifyStudio({
                           setExpandedEditors((prev) => ({ ...prev, [q.id]: false }));
                         }}
                         onCancel={() => setExpandedEditors((prev) => ({ ...prev, [q.id]: false }))}
+                        onJumpToPage={(p) => setTargetPdfPage(p)}
                       />
                     )}
                   </div>
@@ -715,12 +932,15 @@ function InlineQuestionEditor({
   question,
   onSaved,
   onCancel,
+  onJumpToPage,
 }: {
   question: Question;
   onSaved: (q: Question) => void;
   onCancel: () => void;
+  onJumpToPage?: (page: number) => void;
 }) {
   const [body, setBody] = useState(question.body);
+  const [sourcePage, setSourcePage] = useState<number | null>(question.sourcePage ?? null);
   const [subject, setSubject] = useState(question.subject);
   const [type, setType] = useState(question.type);
   const [options, setOptions] = useState<QuestionOption[]>(question.options ?? []);
@@ -742,6 +962,7 @@ function InlineQuestionEditor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           updatedAt: new Date(question.updatedAt).toISOString(),
+          sourcePage,
           subject,
           type,
           body,
@@ -789,6 +1010,7 @@ function InlineQuestionEditor({
             <option value="physics">Physics</option>
             <option value="chemistry">Chemistry</option>
             <option value="maths">Maths</option>
+            <option value="biology">Biology</option>
           </Select>
         </div>
         <div>
@@ -859,7 +1081,31 @@ function InlineQuestionEditor({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div>
+          <Label>Source Page (PDF/Doc)</Label>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number"
+              min={1}
+              value={sourcePage ?? ''}
+              onChange={(e) => setSourcePage(e.target.value ? Number(e.target.value) : null)}
+              placeholder="e.g. 1"
+            />
+            {sourcePage && onJumpToPage && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => onJumpToPage(sourcePage)}
+                title="Jump PDF to this page"
+                className="shrink-0 px-2"
+              >
+                <Navigation className="size-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
         <div>
           <Label>Difficulty (1-10)</Label>
           <Input

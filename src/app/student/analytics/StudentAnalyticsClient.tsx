@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Award,
+  RotateCw,
   Target,
   TrendingUp,
 } from 'lucide-react';
@@ -20,25 +21,43 @@ import {
   Cell,
   Legend,
 } from 'recharts';
-import { Alert, Badge, buttonClass, Card, CardBody, CardHeader, CardTitle, EmptyState, Spinner } from '@/components/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  buttonClass,
+  Card,
+  CardBody,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Spinner,
+  StatTile,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui';
 
 interface StudentAnalyticsData {
   totalAttempts: number;
   avgScore: number;
-  avgPercentile: number;
+  avgPercentile: number | null;
   recentTests: Array<{
     attemptId: string;
     testTitle: string;
-    submittedAt: string;
+    submittedAt: string | null;
     score: number;
     maxMarks: number;
-    percentile: number;
-    accuracy: number;
+    percentile: number | null;
   }>;
   subjectBreakdown: {
     physics?: { attempted: number; correct: number; accuracy: number };
     chemistry?: { attempted: number; correct: number; accuracy: number };
     maths?: { attempted: number; correct: number; accuracy: number };
+    biology?: { attempted: number; correct: number; accuracy: number };
   };
   chapterBreakdown: Array<{
     chapter: string;
@@ -55,20 +74,26 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch('/api/analytics/student');
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.message ?? 'Failed to load analytics');
-        setData(json);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch('/api/analytics/student/me');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? 'Failed to load analytics');
       }
+      const json = await res.json();
+      setData(json);
+    } catch (err: any) {
+      setError(err.message || 'Could not load student analytics');
+    } finally {
+      setLoading(false);
     }
-    load();
+  }
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   if (loading) {
@@ -82,9 +107,15 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
 
   if (error || !data) {
     return (
-      <Alert tone="red" title="Error">
-        {error ?? 'Failed to load analytics'}
-      </Alert>
+      <div className="space-y-4">
+        <Alert tone="red" title="Failed to load analytics">
+          {error ?? 'Failed to load analytics'}
+        </Alert>
+        <Button variant="secondary" size="sm" onClick={loadData}>
+          <RotateCw className="mr-1.5 size-3.5" />
+          Retry
+        </Button>
+      </div>
     );
   }
 
@@ -116,14 +147,15 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
       name: t.testTitle.length > 18 ? t.testTitle.slice(0, 16) + '...' : t.testTitle,
       score: t.score,
       maxMarks: t.maxMarks,
-      percentile: t.percentile,
+      percentile: t.percentile !== null ? t.percentile : null,
     }));
 
   // Subject Bar Data
   const subjectChartData = [
-    { subject: 'Physics', accuracy: data.subjectBreakdown.physics?.accuracy ?? 0, fill: '#1E3A8A' },
+    { subject: 'Physics', accuracy: data.subjectBreakdown.physics?.accuracy ?? 0, fill: '#3b5bdb' },
     { subject: 'Chemistry', accuracy: data.subjectBreakdown.chemistry?.accuracy ?? 0, fill: '#059669' },
-    { subject: 'Maths', accuracy: data.subjectBreakdown.maths?.accuracy ?? 0, fill: '#7C3AED' },
+    { subject: 'Maths', accuracy: data.subjectBreakdown.maths?.accuracy ?? 0, fill: '#f59e0b' },
+    { subject: 'Biology', accuracy: data.subjectBreakdown.biology?.accuracy ?? 0, fill: '#9333ea' },
   ];
 
   return (
@@ -137,44 +169,27 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="border-brand-100 bg-gradient-to-br from-white to-brand-50/40 dark:border-brand-900 dark:from-slate-900 dark:to-brand-950/40">
-          <CardBody className="flex items-center gap-4 p-5">
-            <span className="flex size-12 items-center justify-center rounded-xl bg-brand-700 text-white shadow-sm">
-              <Award className="size-6" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Average Percentile</p>
-              <p className="text-2xl font-black text-brand-700 dark:text-brand-400">{data.avgPercentile} %ile</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Across {data.totalAttempts} completed exam{data.totalAttempts === 1 ? '' : 's'}</p>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-emerald-100 bg-gradient-to-br from-white to-emerald-50/40 dark:border-emerald-900 dark:from-slate-900 dark:to-emerald-950/40">
-          <CardBody className="flex items-center gap-4 p-5">
-            <span className="flex size-12 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-              <TrendingUp className="size-6" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Average Score</p>
-              <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400">{data.avgScore} Marks</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Mean marks per mock attempt</p>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-amber-100 bg-gradient-to-br from-white to-amber-50/40 dark:border-amber-900 dark:from-slate-900 dark:to-amber-950/40">
-          <CardBody className="flex items-center gap-4 p-5">
-            <span className="flex size-12 items-center justify-center rounded-xl bg-amber-500 text-slate-900 shadow-sm">
-              <Target className="size-6" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Tests Attempted</p>
-              <p className="text-2xl font-black text-slate-900 dark:text-slate-100">{data.totalAttempts}</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Practice & timed exams</p>
-            </div>
-          </CardBody>
-        </Card>
+        <StatTile
+          label="Average Percentile"
+          value={data.avgPercentile !== null ? `${data.avgPercentile} %ile` : '—'}
+          tone="brand"
+          subtext={`Across ${data.totalAttempts} completed exam${data.totalAttempts === 1 ? '' : 's'}`}
+          icon={<Award className="size-4" />}
+        />
+        <StatTile
+          label="Average Score"
+          value={`${data.avgScore} Marks`}
+          tone="emerald"
+          subtext="Mean marks per mock attempt"
+          icon={<TrendingUp className="size-4" />}
+        />
+        <StatTile
+          label="Tests Attempted"
+          value={data.totalAttempts}
+          tone="amber"
+          subtext="Practice & timed exams"
+          icon={<Target className="size-4" />}
+        />
       </div>
 
       {/* Charts Row */}
@@ -188,18 +203,24 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendChartData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="name" stroke="#64748b" fontSize={11} />
-                  <YAxis stroke="#64748b" fontSize={11} />
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
+                  <XAxis dataKey="name" className="text-slate-500 dark:text-slate-400" fontSize={11} />
+                  <YAxis className="text-slate-500 dark:text-slate-400" fontSize={11} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '12px' }}
+                    contentStyle={{
+                      backgroundColor: 'var(--color-surface, #ffffff)',
+                      borderColor: 'var(--color-hairline, #e2e8f0)',
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      color: 'var(--color-ink, #0f172a)',
+                    }}
                   />
                   <Legend wrapperStyle={{ fontSize: '12px' }} />
                   <Line
                     type="monotone"
                     dataKey="score"
                     name="Score (Marks)"
-                    stroke="#3B82F6"
+                    stroke="#3b5bdb"
                     strokeWidth={3}
                     dot={{ r: 4 }}
                   />
@@ -207,7 +228,7 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
                     type="monotone"
                     dataKey="percentile"
                     name="Percentile (%ile)"
-                    stroke="#F59E0B"
+                    stroke="#f59e0b"
                     strokeWidth={2}
                     strokeDasharray="4 4"
                   />
@@ -226,11 +247,17 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={subjectChartData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="subject" stroke="#64748b" fontSize={11} />
-                  <YAxis stroke="#64748b" fontSize={11} domain={[0, 100]} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
+                  <XAxis dataKey="subject" className="text-slate-500 dark:text-slate-400" fontSize={11} />
+                  <YAxis className="text-slate-500 dark:text-slate-400" fontSize={11} domain={[0, 100]} unit="%" />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '12px' }}
+                    contentStyle={{
+                      backgroundColor: 'var(--color-surface, #ffffff)',
+                      borderColor: 'var(--color-hairline, #e2e8f0)',
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      color: 'var(--color-ink, #0f172a)',
+                    }}
                     formatter={(val: any) => [`${val}%`, 'Accuracy']}
                   />
                   <Bar dataKey="accuracy" radius={[6, 6, 0, 0]}>
@@ -249,46 +276,59 @@ export function StudentAnalyticsClient({ studentName }: { studentName: string })
       <div className="space-y-3">
         <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Chapter Mastery & Weak Areas</h2>
         <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Subject</th>
-                  <th className="px-4 py-3 font-semibold">Chapter</th>
-                  <th className="px-4 py-3 font-semibold">Questions Attempted</th>
-                  <th className="px-4 py-3 font-semibold">Accuracy</th>
-                  <th className="px-4 py-3 text-right font-semibold">Proficiency</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {data.chapterBreakdown.map((c, i) => (
-                  <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-3 font-bold uppercase text-slate-700 dark:text-slate-300">
-                      <Badge
-                        tone={c.subject === 'physics' ? 'brand' : c.subject === 'chemistry' ? 'green' : 'amber'}
-                      >
-                        {c.subject}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{c.chapter}</td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                      {c.correct} correct / {c.attempted} attempted ({c.total} served)
-                    </td>
-                    <td className="px-4 py-3 font-bold text-slate-900 dark:text-slate-100">{c.accuracy}%</td>
-                    <td className="px-4 py-3 text-right">
-                      {c.accuracy >= 70 ? (
-                        <Badge tone="green">Mastered</Badge>
-                      ) : c.accuracy >= 40 ? (
-                        <Badge tone="amber">Needs Practice</Badge>
-                      ) : (
-                        <Badge tone="red">Weak Chapter</Badge>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Subject</TableHead>
+                <TableHead>Chapter</TableHead>
+                <TableHead>Questions Attempted</TableHead>
+                <TableHead>Accuracy</TableHead>
+                <TableHead className="text-right">Proficiency</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.chapterBreakdown.map((c, i) => (
+                <TableRow key={i}>
+                  <TableCell className="font-bold uppercase text-slate-700 dark:text-slate-300">
+                    <Badge
+                      tone={
+                        c.subject === 'physics'
+                          ? 'brand'
+                          : c.subject === 'chemistry'
+                          ? 'green'
+                          : c.subject === 'maths'
+                          ? 'amber'
+                          : 'purple'
+                      }
+                    >
+                      {c.subject}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-medium text-slate-900 dark:text-slate-100">{c.chapter}</TableCell>
+                  <TableCell className="tnum text-slate-600 dark:text-slate-400">
+                    {c.correct} correct / {c.attempted} attempted ({c.total} served)
+                  </TableCell>
+                  <TableCell className="tnum font-bold text-slate-900 dark:text-slate-100">{c.accuracy}%</TableCell>
+                  <TableCell className="text-right">
+                    {c.accuracy >= 70 ? (
+                      <Badge tone="green">Mastered</Badge>
+                    ) : c.accuracy >= 40 ? (
+                      <Badge tone="amber">Needs Practice</Badge>
+                    ) : (
+                      <Badge tone="red">Weak Chapter</Badge>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {data.chapterBreakdown.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-6 text-center text-slate-400 dark:text-slate-500">
+                    No chapter breakdown data available yet.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </Card>
       </div>
     </div>

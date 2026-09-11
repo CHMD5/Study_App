@@ -1,9 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-
 import { Award, Layers, Users } from 'lucide-react';
-import { Alert, Badge, Card, CardBody, Spinner } from '@/components/ui';
+import {
+  Alert,
+  Badge,
+  Card,
+  Spinner,
+  StatTile,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui';
 
 interface CohortData {
   metrics: {
@@ -11,21 +22,28 @@ interface CohortData {
     totalPublishedTests: number;
     totalAttemptsSubmitted: number;
   };
-  leaderboard: Array<{
-    studentId: string;
-    studentName: string;
-    email: string;
-    batch: string | null;
-    testsAttempted: number;
+  batchSummaries?: Array<{
+    batch: string;
+    studentCount: number;
+    attemptCount: number;
     avgScore: number;
-    avgPercentile: number;
+    avgPercentile: number | null;
+  }>;
+  studentRankings: Array<{
+    studentId: string;
+    fullName: string;
+    username: string;
+    batch: string | null;
+    testsTaken: number;
+    avgScore: number;
+    avgPercentile: number | null;
   }>;
   weakChapters: Array<{
     chapter: string;
     subject: string;
-    totalResponses: number;
-    correctResponses: number;
-    accuracy: number;
+    totalAnswers: number;
+    correctAnswers: number;
+    accuracyPct: number;
   }>;
 }
 
@@ -78,101 +96,133 @@ export function TeacherCohortAnalyticsClient() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="border-brand-100 bg-gradient-to-br from-white to-brand-50/40 dark:border-brand-900 dark:from-slate-900 dark:to-brand-950/40">
-          <CardBody className="flex items-center gap-4 p-5">
-            <span className="flex size-12 items-center justify-center rounded-xl bg-brand-700 text-white shadow-sm">
-              <Users className="size-6" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Enrolled Students</p>
-              <p className="text-2xl font-black text-brand-700 dark:text-brand-400">{data.metrics.totalStudents}</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Active candidates in roster</p>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-emerald-100 bg-gradient-to-br from-white to-emerald-50/40 dark:border-emerald-900 dark:from-slate-900 dark:to-emerald-950/40">
-          <CardBody className="flex items-center gap-4 p-5">
-            <span className="flex size-12 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-              <Layers className="size-6" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Published Tests</p>
-              <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400">{data.metrics.totalPublishedTests}</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Available to student roster</p>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-amber-100 bg-gradient-to-br from-white to-amber-50/40 dark:border-amber-900 dark:from-slate-900 dark:to-amber-950/40">
-          <CardBody className="flex items-center gap-4 p-5">
-            <span className="flex size-12 items-center justify-center rounded-xl bg-amber-500 text-slate-900 shadow-sm">
-              <Award className="size-6" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Graded Attempts</p>
-              <p className="text-2xl font-black text-slate-900 dark:text-slate-100">{data.metrics.totalAttemptsSubmitted}</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Evaluated test attempts</p>
-            </div>
-          </CardBody>
-        </Card>
+        <StatTile
+          label="Enrolled Students"
+          value={data.metrics.totalStudents}
+          tone="brand"
+          subtext="Active candidates in roster"
+          icon={<Users className="size-4" />}
+        />
+        <StatTile
+          label="Published Tests"
+          value={data.metrics.totalPublishedTests}
+          tone="emerald"
+          subtext="Available to student roster"
+          icon={<Layers className="size-4" />}
+        />
+        <StatTile
+          label="Graded Attempts"
+          value={data.metrics.totalAttemptsSubmitted}
+          tone="amber"
+          subtext="Evaluated test attempts"
+          icon={<Award className="size-4" />}
+        />
       </div>
+
+      {/* Batch-Level Performance */}
+      {data.batchSummaries && data.batchSummaries.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Batch-Level Performance</h2>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              Comparative metrics across student batches and cohorts.
+            </p>
+          </div>
+
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Batch</TableHead>
+                  <TableHead>Enrolled Students</TableHead>
+                  <TableHead>Total Submissions</TableHead>
+                  <TableHead>Average Score</TableHead>
+                  <TableHead className="text-right">Average Percentile</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.batchSummaries.map((b) => (
+                  <TableRow key={b.batch}>
+                    <TableCell className="font-semibold text-slate-900 dark:text-slate-100">
+                      <Badge tone="slate">{b.batch}</Badge>
+                    </TableCell>
+                    <TableCell className="tnum text-slate-600 dark:text-slate-400">{b.studentCount}</TableCell>
+                    <TableCell className="tnum text-slate-600 dark:text-slate-400">{b.attemptCount}</TableCell>
+                    <TableCell className="tnum font-bold text-brand-700 dark:text-brand-400">{b.avgScore} M</TableCell>
+                    <TableCell className="tnum text-right font-medium text-slate-700 dark:text-slate-300">
+                      {b.avgPercentile !== null ? `${b.avgPercentile} %ile` : '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+      )}
 
       {/* Class-Wide Weak Chapters */}
       <div className="space-y-3">
         <div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Class-Wide Priority Revision Chapters</h2>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Chapters with lowest overall accuracy across all student test attempts.
+            Chapters with lowest overall accuracy across all student test attempts (minimum 5 responses required).
           </p>
         </div>
 
         <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Subject</th>
-                  <th className="px-4 py-3 font-semibold">Chapter</th>
-                  <th className="px-4 py-3 font-semibold">Total Responses</th>
-                  <th className="px-4 py-3 font-semibold">Correct Answers</th>
-                  <th className="px-4 py-3 font-semibold">Accuracy %</th>
-                  <th className="px-4 py-3 text-right font-semibold">Revision Urgency</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {data.weakChapters.map((wc, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-3 font-bold uppercase text-slate-700 dark:text-slate-300">
-                      <Badge tone={wc.subject === 'physics' ? 'brand' : wc.subject === 'chemistry' ? 'green' : 'amber'}>
-                        {wc.subject}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-slate-900 dark:text-slate-100">{wc.chapter}</td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{wc.totalResponses}</td>
-                    <td className="px-4 py-3 font-semibold text-emerald-700 dark:text-emerald-400">{wc.correctResponses}</td>
-                    <td className="px-4 py-3 font-bold text-slate-900 dark:text-slate-100">{wc.accuracy}%</td>
-                    <td className="px-4 py-3 text-right">
-                      {wc.accuracy < 40 ? (
-                        <Badge tone="red">Critical Revision</Badge>
-                      ) : wc.accuracy < 60 ? (
-                        <Badge tone="amber">Moderate Focus</Badge>
-                      ) : (
-                        <Badge tone="green">Good</Badge>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {data.weakChapters.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="py-6 text-center text-slate-400 dark:text-slate-500">
-                      No chapter accuracy data available yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Subject</TableHead>
+                <TableHead>Chapter</TableHead>
+                <TableHead>Total Responses</TableHead>
+                <TableHead>Correct Answers</TableHead>
+                <TableHead>Accuracy %</TableHead>
+                <TableHead className="text-right">Revision Urgency</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.weakChapters.map((wc, idx) => (
+                <TableRow key={idx}>
+                  <TableCell className="font-bold uppercase text-slate-700 dark:text-slate-300">
+                    <Badge
+                      tone={
+                        wc.subject === 'physics'
+                          ? 'brand'
+                          : wc.subject === 'chemistry'
+                            ? 'green'
+                            : wc.subject === 'maths'
+                              ? 'amber'
+                              : 'purple'
+                      }
+                    >
+                      {wc.subject}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-semibold text-slate-900 dark:text-slate-100">{wc.chapter}</TableCell>
+                  <TableCell className="tnum text-slate-600 dark:text-slate-400">{wc.totalAnswers}</TableCell>
+                  <TableCell className="tnum font-semibold text-emerald-700 dark:text-emerald-400">{wc.correctAnswers}</TableCell>
+                  <TableCell className="tnum font-bold text-slate-900 dark:text-slate-100">{wc.accuracyPct}%</TableCell>
+                  <TableCell className="text-right">
+                    {wc.accuracyPct < 40 ? (
+                      <Badge tone="red">Critical Revision</Badge>
+                    ) : wc.accuracyPct < 60 ? (
+                      <Badge tone="amber">Moderate Focus</Badge>
+                    ) : (
+                      <Badge tone="green">Good</Badge>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {data.weakChapters.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-6 text-center text-slate-400 dark:text-slate-500">
+                    No chapter accuracy data available yet (requires ≥ 5 responses per chapter).
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </Card>
       </div>
 
@@ -186,58 +236,58 @@ export function TeacherCohortAnalyticsClient() {
         </div>
 
         <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Rank</th>
-                  <th className="px-4 py-3 font-semibold">Student Name</th>
-                  <th className="px-4 py-3 font-semibold">Batch</th>
-                  <th className="px-4 py-3 font-semibold">Tests Taken</th>
-                  <th className="px-4 py-3 font-semibold">Average Marks</th>
-                  <th className="px-4 py-3 font-semibold">Average Percentile</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {data.leaderboard.map((s, idx) => (
-                  <tr key={s.studentId} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-3 font-bold text-slate-900 dark:text-slate-100">
-                      {idx === 0 ? (
-                        <span className="flex size-6 items-center justify-center rounded-full bg-amber-400 font-black text-slate-950">
-                          1
-                        </span>
-                      ) : idx === 1 ? (
-                        <span className="flex size-6 items-center justify-center rounded-full bg-slate-300 font-black text-slate-900">
-                          2
-                        </span>
-                      ) : idx === 2 ? (
-                        <span className="flex size-6 items-center justify-center rounded-full bg-amber-700 font-black text-white">
-                          3
-                        </span>
-                      ) : (
-                        `#${idx + 1}`
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-900 dark:text-slate-100">{s.studentName}</p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500">{s.email}</p>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-400">{s.batch ?? '-'}</td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{s.testsAttempted}</td>
-                    <td className="px-4 py-3 font-black text-brand-700 dark:text-brand-400">{s.avgScore} M</td>
-                    <td className="px-4 py-3 font-bold text-accent-600 dark:text-accent-400">{s.avgPercentile} %ile</td>
-                  </tr>
-                ))}
-                {data.leaderboard.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="py-6 text-center text-slate-400 dark:text-slate-500">
-                      No student attempts recorded yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Rank</TableHead>
+                <TableHead>Student Name</TableHead>
+                <TableHead>Batch</TableHead>
+                <TableHead>Tests Taken</TableHead>
+                <TableHead>Average Marks</TableHead>
+                <TableHead className="text-right">Average Percentile</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.studentRankings.map((s, idx) => (
+                <TableRow key={s.studentId}>
+                  <TableCell className="font-bold text-slate-900 dark:text-slate-100">
+                    {idx === 0 ? (
+                      <span className="tnum flex size-6 items-center justify-center rounded-full bg-amber-400 font-black text-slate-950">
+                        1
+                      </span>
+                    ) : idx === 1 ? (
+                      <span className="tnum flex size-6 items-center justify-center rounded-full bg-slate-300 font-black text-slate-900">
+                        2
+                      </span>
+                    ) : idx === 2 ? (
+                      <span className="tnum flex size-6 items-center justify-center rounded-full bg-amber-700 font-black text-white">
+                        3
+                      </span>
+                    ) : (
+                      <span className="tnum">#{idx + 1}</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">{s.fullName}</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">{s.username}</p>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-slate-600 dark:text-slate-400">{s.batch ?? '-'}</TableCell>
+                  <TableCell className="tnum text-slate-600 dark:text-slate-400">{s.testsTaken}</TableCell>
+                  <TableCell className="tnum font-black text-brand-700 dark:text-brand-400">{s.avgScore} M</TableCell>
+                  <TableCell className="tnum text-right font-bold text-accent-600 dark:text-accent-400">
+                    {s.avgPercentile !== null ? `${s.avgPercentile} %ile` : '—'}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {data.studentRankings.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-6 text-center text-slate-400 dark:text-slate-500">
+                    No student attempts recorded yet.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </Card>
       </div>
     </div>

@@ -8,6 +8,7 @@ describe('toStudentQuestion security & leak prevention', () => {
     humanCode: 'JM2023-P-01',
     paperId: 'paper-123',
     sourceQno: 1,
+    sourcePage: 1,
     subject: 'physics',
     type: 'mcq',
     status: 'verified',

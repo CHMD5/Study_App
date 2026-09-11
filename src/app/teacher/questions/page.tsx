@@ -1,6 +1,6 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { UploadCloud } from 'lucide-react';
+import { Lightbulb, UploadCloud } from 'lucide-react';
 import { buttonClass } from '@/components/ui';
 import { QuestionsListView } from './QuestionsListView';
 
@@ -16,10 +16,16 @@ export default function QuestionsPage() {
             Every question across every registered paper. Filter, review, and verify before adding to a test.
           </p>
         </div>
-        <Link href="/teacher/questions/upload" className={buttonClass('primary', 'sm')}>
-          <UploadCloud className="size-4" />
-          Upload standalone questions
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/teacher/questions/upload?mode=questions" className={buttonClass('primary', 'sm')}>
+            <UploadCloud className="size-4" />
+            Upload Questions
+          </Link>
+          <Link href="/teacher/questions/upload?mode=solutions" className={buttonClass('secondary', 'sm')}>
+            <Lightbulb className="size-4 text-amber-500" />
+            Upload Solutions
+          </Link>
+        </div>
       </div>
 
       <Suspense>

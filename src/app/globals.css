@@ -33,8 +33,14 @@
   --color-accent-900: #78350f;
   --color-accent-950: #451a03;
 
-  --font-sans: 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --font-sans: var(--font-sans, 'Segoe UI', Inter, system-ui, -apple-system, sans-serif);
   --font-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, ui-monospace, monospace;
+
+  --color-surface: var(--color-surface);
+  --color-surface-muted: var(--color-surface-muted);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-hairline: var(--color-hairline);
 }
 
 html,
@@ -47,12 +53,25 @@ body {
    in a `h-[calc(100vh-Nrem)]`, and all three guesses differed. */
 :root {
   --app-header-h: 3.5rem;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-ink: #0f172a;
+  --color-ink-muted: #64748b;
+  --color-hairline: #e2e8f0;
 }
 @media (max-width: 767px) {
   /* the nav collapses to a second scrollable strip below md */
   :root {
     --app-header-h: 6rem;
   }
+}
+
+html.dark {
+  --color-surface: #0f172a;
+  --color-surface-muted: #090d16;
+  --color-ink: #f1f5f9;
+  --color-ink-muted: #94a3b8;
+  --color-hairline: #1e293b;
 }
 
 /* Digits that don't reflow as they change — the exam countdown, marks, ranks
@@ -62,15 +81,15 @@ body {
 }
 
 body {
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--color-surface-muted, #f8fafc);
+  color: var(--color-ink, #0f172a);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
 html.dark body {
-  background: #090d16;
-  color: #f1f5f9;
+  background: var(--color-surface-muted, #090d16);
+  color: var(--color-ink, #f1f5f9);
 }
 
 /* KaTeX inherits a slightly-too-large size against 14px UI text. */
@@ -82,8 +101,20 @@ html.dark .katex {
   color: #f1f5f9;
 }
 
-/* Question bodies frequently carry wide display math or tables; let them scroll
-   inside their own box rather than blowing out the page. */
+/* Question bodies: optically comfortable scale (16px/17px, max-width 70ch)
+   and properly contained tables/math. */
+.q-render {
+  font-size: 1rem;
+  line-height: 1.65;
+  max-width: 70ch;
+}
+@media (min-width: 768px) {
+  .q-render {
+    font-size: 1.0625rem;
+    line-height: 1.7;
+  }
+}
+
 .q-render :is(table) {
   border-collapse: collapse;
   margin: 0.6rem 0;

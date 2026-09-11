@@ -1,18 +1,33 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { apiTeacher } from '@/lib/auth';
 import { HttpError, isForeignKeyViolation, isUniqueViolation, json, withApi } from '@/lib/http';
-import { IngestPayload } from '@/lib/zod/ingest';
+import { IngestPayload, IngestSolutionsPayload } from '@/lib/zod/ingest';
 import { getDb } from '@/db/client';
-import { papers, questions, type ExtractionMeta } from '@/db/schema';
+import { papers, questions, type ExtractionMeta, type QuestionAnswer } from '@/db/schema';
 import { withDbLock } from '@/lib/db-lock';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/**
- * LLD §5.1 / §5.1's 422 example: validation is all-or-nothing. If ANY question
- * fails the Zod schema, ZERO rows are written — a partially-ingested 68-of-75
- * paper is worse than fixing the JSON once and re-pasting.
- */
+function parseQuestionAnswer(raw: string | null | undefined, type?: 'mcq' | 'integer'): QuestionAnswer | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  if (type === 'mcq' || /^[A-D]$/i.test(trimmed)) {
+    return { key: trimmed.toUpperCase() };
+  }
+
+  const num = Number(trimmed);
+  if (!Number.isNaN(num)) {
+    return { value: num };
+  }
+
+  if (type === 'integer') {
+    return null;
+  }
+  return { key: trimmed };
+}
+
 export const POST = withApi<Ctx>(async (req, { params }) => {
   const session = await apiTeacher();
   const { id: paperId } = await params;
@@ -24,41 +39,70 @@ export const POST = withApi<Ctx>(async (req, { params }) => {
   const body = await req.json().catch(() => null);
   if (!body) throw new HttpError(400, 'invalid_request', 'Expected a JSON body.');
 
-  const promptVersion = typeof body.promptVersion === 'string' ? body.promptVersion : undefined;
+  // Mode 2: Solutions Only for this paper
+  if ('solutions' in body && Array.isArray(body.solutions)) {
+    const parsed = IngestSolutionsPayload.parse(body);
 
-  // Validate the whole payload BEFORE touching the database. A single ZodError
-  // here — caught by withApi — produces the { error: 'validation_failed',
-  // issues: [...] } shape with nothing written, satisfying all-or-nothing by
-  // construction rather than by wrapping inserts in a rollback.
+    let updatedCount = 0;
+    const unmatchedQnos: number[] = [];
+
+    for (const sol of parsed.solutions) {
+      const existing = await db
+        .select({ id: questions.id, type: questions.type, answer: questions.answer })
+        .from(questions)
+        .where(and(eq(questions.paperId, paperId), eq(questions.sourceQno, sol.sourceQno)));
+
+      if (existing.length === 0) {
+        unmatchedQnos.push(sol.sourceQno);
+        continue;
+      }
+
+      for (const q of existing) {
+        const updates: Record<string, unknown> = {
+          solution: sol.solution,
+          lastEditedBy: session.userId,
+          updatedAt: new Date(),
+        };
+        if (sol.answer && !q.answer) {
+          const parsedAns = parseQuestionAnswer(sol.answer, q.type);
+          if (parsedAns) updates.answer = parsedAns;
+        }
+        if (sol.sourcePage) {
+          updates.sourcePage = sol.sourcePage;
+        }
+        await db.update(questions).set(updates).where(eq(questions.id, q.id));
+        updatedCount++;
+      }
+    }
+
+    return json({
+      updated: updatedCount,
+      totalSolutions: parsed.solutions.length,
+      unmatchedQnos,
+    });
+  }
+
+  // Mode 1: Questions Only OR Mode 3: Both Questions & Solutions
+  const promptVersion = typeof body.promptVersion === 'string' ? body.promptVersion : undefined;
   const parsed = IngestPayload.parse(body);
 
   const rows = parsed.questions.map((q) => ({
     paperId,
     sourceQno: q.sourceQno,
+    sourcePage: q.sourcePage ?? null,
     subject: q.subject,
     type: q.type,
     status: 'draft' as const,
     body: q.body,
     options: q.type === 'mcq' ? q.options : [],
+    answer: parseQuestionAnswer(q.answer, q.type),
+    solution: q.solution?.trim() || null,
     extractionNotes: q.uncertain.length > 0 ? { uncertain: q.uncertain } : null,
     createdBy: session.userId,
     lastEditedBy: session.userId,
     humanCode: `${paper.code}-${q.subject[0].toUpperCase()}-${String(q.sourceQno).padStart(3, '0')}`,
   }));
 
-  // ---------------------------------------------------------------------
-  // Re-ingest handling.
-  //
-  // human_code is deterministic (`<paperCode>-<S>-<qno>`), so pasting a
-  // corrected JSON for a paper that already has questions used to hit the
-  // UNIQUE constraint and surface as a bare 500 'internal_error' with no
-  // explanation of what went wrong or how to proceed.
-  //
-  // Default is now an explicit 409 naming the collision. `?mode=replace`
-  // deletes the paper's existing questions first — refused if any of them are
-  // already used in a test (test_questions is ON DELETE RESTRICT by design), so
-  // a live paper cannot be pulled out from under a test.
-  // ---------------------------------------------------------------------
   const mode = new URL(req.url).searchParams.get('mode');
   const codes = rows.map((r) => r.humanCode);
 
@@ -82,8 +126,6 @@ export const POST = withApi<Ctx>(async (req, { params }) => {
     await withDbLock(async () => {
       await db.transaction(async (tx) => {
         if (mode === 'replace') {
-          // Scoped to this paper, not to the colliding codes, so a re-ingest
-          // that renumbers questions doesn't leave the old ones orphaned.
           await tx.delete(questions).where(eq(questions.paperId, paperId));
         }
 
@@ -110,13 +152,6 @@ export const POST = withApi<Ctx>(async (req, { params }) => {
     }
     throw err;
   }
-
-  // Seed each question's image placeholders as unresolved rows would require a
-  // question_images entry, but that table's NOT NULL storage_path means a
-  // placeholder can't be represented until it's cropped — so instead the
-  // editor (stage 5) diffs body's [[IMG:id]] tokens against question_images
-  // rows live. Nothing to insert here; imagePlaceholders' hints are informational
-  // and are not persisted separately from the body text that already carries them.
 
   const extractionMeta: ExtractionMeta = {
     promptVersion,

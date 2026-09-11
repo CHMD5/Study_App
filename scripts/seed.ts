@@ -63,6 +63,7 @@ async function main() {
     passwordHash,
     canLogin: true,
     batch: 'JEE-2027-A',
+    phone: '+919876543210',
   });
 
   for (let i = 0; i < DEMO_STUDENT_NAMES.length; i++) {
@@ -348,6 +349,7 @@ async function upsertProfile(
     passwordHash: string | null;
     canLogin: boolean;
     batch?: string;
+    phone?: string;
   },
 ) {
   const [existing] = await db.select().from(profiles).where(eq(profiles.username, values.username));

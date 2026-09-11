@@ -16,19 +16,20 @@ const PAGE_SIZE = 30;
  * unrecognised is now a 422 naming the offending parameter.
  */
 const QuerySchema = z.object({
-  subject: z.enum(['physics', 'chemistry', 'maths']).optional(),
+  subject: z.enum(['physics', 'chemistry', 'maths', 'biology']).optional(),
   status: z.enum(['draft', 'verified', 'archived']).optional(),
   type: z.enum(['mcq', 'integer']).optional(),
   chapter: z.string().min(1).max(200).optional(),
   topic: z.string().min(1).max(200).optional(),
   difficulty: z.coerce.number().int().min(1).max(10).optional(),
   paperId: z.string().uuid().optional(),
+  unresolvedImages: z.enum(['true', 'false']).optional(),
   q: z.string().min(1).max(200).optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
 });
 
 /**
- * GET /api/questions?subject=&status=&chapter=&topic=&difficulty=&type=&q=&page=
+ * GET /api/questions?subject=&status=&chapter=&topic=&difficulty=&type=&q=&page=&unresolvedImages=
  * Filters per LLD §5.1. `q` runs against the GIN full-text index on `body`.
  */
 export const GET = withApi(async (req) => {
@@ -44,7 +45,7 @@ export const GET = withApi(async (req) => {
     });
   }
 
-  const { subject, status, type, chapter, topic, difficulty, paperId, q: search, page } = parsed.data;
+  const { subject, status, type, chapter, topic, difficulty, paperId, unresolvedImages, q: search, page } = parsed.data;
 
   const conditions = [];
   if (subject) conditions.push(eq(questions.subject, subject));
@@ -54,6 +55,11 @@ export const GET = withApi(async (req) => {
   if (topic) conditions.push(eq(questions.topic, topic));
   if (difficulty !== undefined) conditions.push(eq(questions.difficulty, difficulty));
   if (paperId) conditions.push(eq(questions.paperId, paperId));
+  if (unresolvedImages === 'true') {
+    conditions.push(sql`${questions.body} LIKE '%[[IMG:%' AND NOT EXISTS (
+      SELECT 1 FROM question_images qi WHERE qi.question_id = ${questions.id}
+    )`);
+  }
   if (search) {
     conditions.push(sql`to_tsvector('english', ${questions.body}) @@ plainto_tsquery('english', ${search})`);
   }

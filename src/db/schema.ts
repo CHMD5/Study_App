@@ -23,7 +23,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 export const userRole = pgEnum('user_role', ['teacher', 'student']);
-export const subjectEnum = pgEnum('subject_enum', ['physics', 'chemistry', 'maths']);
+export const subjectEnum = pgEnum('subject_enum', ['physics', 'chemistry', 'maths', 'biology']);
 export const qtypeEnum = pgEnum('qtype_enum', ['mcq', 'integer']);
 export const qstatusEnum = pgEnum('qstatus_enum', ['draft', 'verified', 'archived']);
 export const attemptStatus = pgEnum('attempt_status', [
@@ -49,6 +49,7 @@ export const profiles = pgTable('profiles', {
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   username: text('username').notNull().unique(),
+  phone: text('phone'),
   passwordHash: text('password_hash'),
   canLogin: boolean('can_login').notNull().default(true),
 });
@@ -93,6 +94,7 @@ export const questions = pgTable(
     humanCode: text('human_code').unique(),
     paperId: uuid('paper_id').references(() => papers.id, { onDelete: 'set null' }),
     sourceQno: integer('source_qno'),
+    sourcePage: integer('source_page'),
 
     subject: subjectEnum('subject').notNull(),
     type: qtypeEnum('type').notNull(),

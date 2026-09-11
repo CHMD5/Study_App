@@ -21,7 +21,8 @@ export const QuestionAnswerSchema = z.union([
 export const QuestionUpdateSchema = z
   .object({
     updatedAt: z.string().datetime({ offset: true }),
-    subject: z.enum(['physics', 'chemistry', 'maths']).optional(),
+    sourcePage: z.number().int().positive().nullable().optional(),
+    subject: z.enum(['physics', 'chemistry', 'maths', 'biology']).optional(),
     type: z.enum(['mcq', 'integer']).optional(),
     body: z.string().min(1).optional(),
     options: z.array(QuestionOptionSchema).optional(),

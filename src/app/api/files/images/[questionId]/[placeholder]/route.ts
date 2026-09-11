@@ -16,7 +16,7 @@ type Ctx = { params: Promise<{ questionId: string; placeholder: string }> };
  * Files live under DATA_DIR, never under public/, so this check is the only
  * way to reach them.
  */
-export const GET = withApi<Ctx>(async (_req, { params }) => {
+export const GET = withApi<Ctx>(async (req, { params }) => {
   const session = await apiSession();
   const { questionId, placeholder } = await params;
 
@@ -43,6 +43,18 @@ export const GET = withApi<Ctx>(async (_req, { params }) => {
 
   const absPath = paperAbsPath(image.storagePath);
   const stat = fs.statSync(absPath);
+  const etag = `"${Math.floor(stat.mtimeMs)}-${stat.size}"`;
+
+  if (req.headers.get('if-none-match') === etag) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        'Cache-Control': 'no-cache, private, must-revalidate',
+      },
+    });
+  }
+
   const webStream = Readable.toWeb(fs.createReadStream(absPath)) as ReadableStream;
 
   return new Response(webStream, {
@@ -50,7 +62,8 @@ export const GET = withApi<Ctx>(async (_req, { params }) => {
     headers: {
       'Content-Type': 'image/webp',
       'Content-Length': String(stat.size),
-      'Cache-Control': 'private, max-age=3600',
+      'Cache-Control': 'no-cache, private, must-revalidate',
+      ETag: etag,
     },
   });
 });

@@ -14,6 +14,16 @@ const nextConfig = {
   experimental: {
     largePageDataBytes: 512 * 1024,
   },
+
+  async redirects() {
+    return [
+      {
+        source: '/srsma',
+        destination: '/SRSMA',
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

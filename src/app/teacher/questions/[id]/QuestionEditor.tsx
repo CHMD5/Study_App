@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ImagePlus, Plus, Trash2, Upload, X } from 'lucide-react';
+import { CheckCircle2, Crop, FileText, ImagePlus, Plus, Trash2, Upload, X } from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -13,14 +13,17 @@ import {
   CardBody,
   CardHeader,
   CardTitle,
+  ConfirmDialog,
   Input,
   Label,
   Select,
   Textarea,
+  useToast,
 } from '@/components/ui';
 import { QuestionBody } from '@/components/Katex';
 import { PdfCropViewer } from '@/components/pdf/PdfCropViewer';
 import { extractAllImageTokens } from '@/lib/question-render';
+import { cn } from '@/lib/cn';
 import type { CropRect, Paper, Question, QuestionAnswer, QuestionImage, QuestionOption } from '@/db/schema';
 
 type EditableFields = {
@@ -34,6 +37,7 @@ type EditableFields = {
   chapter: string;
   subject: Question['subject'];
   type: Question['type'];
+  sourcePage: number | null;
 };
 
 function toEditable(q: Question): EditableFields {
@@ -48,6 +52,7 @@ function toEditable(q: Question): EditableFields {
     chapter: q.chapter ?? '',
     subject: q.subject,
     type: q.type,
+    sourcePage: q.sourcePage ?? null,
   };
 }
 
@@ -61,12 +66,16 @@ export function QuestionEditor({
   paper: Paper | null;
 }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [question, setQuestion] = useState(initialQuestion);
   const [fields, setFields] = useState<EditableFields>(() => toEditable(initialQuestion));
   const [images, setImages] = useState(initialImages);
   const [armedPlaceholder, setArmedPlaceholder] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteQuestionOpen, setDeleteQuestionOpen] = useState(false);
+  const [deleteImageTarget, setDeleteImageTarget] = useState<QuestionImage | null>(null);
+  const [targetPdfPage, setTargetPdfPage] = useState<number | null>(initialQuestion.sourcePage ?? null);
 
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -99,6 +108,7 @@ export function QuestionEditor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           updatedAt: new Date(question.updatedAt).toISOString(),
+          sourcePage: fields.sourcePage ?? null,
           subject: fields.subject,
           type: fields.type,
           body: fields.body,
@@ -157,7 +167,10 @@ export function QuestionEditor({
   }
 
   async function onCrop({ sourcePage, cropRect, blob }: { sourcePage: number; cropRect: CropRect; blob: Blob }) {
-    if (!armedPlaceholder) return;
+    if (!armedPlaceholder) {
+      toast.info('Please click an image placeholder ([[IMG:...]]) to arm it before cropping.');
+      return;
+    }
     setUploading(true);
     try {
       const form = new FormData();
@@ -170,10 +183,9 @@ export function QuestionEditor({
       if (res.ok) {
         const img = await res.json();
         setImages((prev) => [...prev.filter((i) => i.placeholderId !== armedPlaceholder), img]);
+        toast.success(`Saved image [[IMG:${armedPlaceholder}]]`);
         setArmedPlaceholder(null);
       } else {
-        // A failed crop upload used to be swallowed entirely — the chip simply
-        // stayed unresolved with no indication why.
         const body = await res.json().catch(() => ({}));
         setSaveError(body.message ?? 'Could not save that crop. Try again.');
       }
@@ -193,6 +205,7 @@ export function QuestionEditor({
       if (res.ok) {
         const img = await res.json();
         setImages((prev) => [...prev.filter((i) => i.placeholderId !== placeholderId), img]);
+        toast.success(`Uploaded image [[IMG:${placeholderId}]]`);
         setArmedPlaceholder(null);
       } else {
         const body = await res.json().catch(() => ({}));
@@ -203,31 +216,39 @@ export function QuestionEditor({
     }
   }
 
-  async function onDeleteImage(image: QuestionImage) {
-    if (!confirm('Remove this cropped image? You will need to re-crop it.')) return;
+  async function performDeleteImage(image: QuestionImage) {
     const res = await fetch(`/api/questions/${question.id}/images/${image.id}`, { method: 'DELETE' });
-    if (res.ok) setImages((prev) => prev.filter((i) => i.id !== image.id));
+    if (res.ok) {
+      setImages((prev) => prev.filter((i) => i.id !== image.id));
+      toast.success(`Removed image [[IMG:${image.placeholderId}]]`);
+      setDeleteImageTarget(null);
+    } else {
+      toast.error('Could not delete this image.');
+    }
   }
 
-  async function onDeleteQuestion() {
-    if (!confirm(`Delete question ${question.humanCode ?? question.id}? This cannot be undone.`)) return;
+  async function performDeleteQuestion() {
     setDeleting(true);
     try {
       const res = await fetch(`/api/questions/${question.id}`, { method: 'DELETE' });
       if (res.ok) {
+        toast.success('Question deleted.');
         router.push('/teacher/questions');
         router.refresh();
         return;
       }
       const body = await res.json().catch(() => ({}));
-      alert(body.message ?? 'Could not delete this question.');
+      const msg = body.message ?? 'Could not delete this question.';
+      toast.error(msg);
+      setSaveError(msg);
+    } catch {
+      toast.error('Network error: Could not delete question.');
     } finally {
       setDeleting(false);
+      setDeleteQuestionOpen(false);
     }
   }
 
-  // Warn before losing an in-progress edit. The dirty chip in the header was
-  // the only signal, and it is easy to miss on the way to another tab.
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -247,6 +268,17 @@ export function QuestionEditor({
             <Badge tone={question.status === 'verified' ? 'green' : question.status === 'archived' ? 'slate' : 'amber'}>
               {question.status}
             </Badge>
+            {fields.sourcePage ? (
+              <button
+                type="button"
+                onClick={() => setTargetPdfPage(fields.sourcePage)}
+                className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-brand-950 dark:hover:text-brand-300 transition-colors"
+                title="Jump to source page in PDF/Doc"
+              >
+                <FileText className="size-3" />
+                <span>Page {fields.sourcePage}</span>
+              </button>
+            ) : null}
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             <Link href="/teacher/questions" className="hover:underline">
@@ -269,9 +301,9 @@ export function QuestionEditor({
             <CheckCircle2 className="size-4" aria-hidden />
             {question.status === 'verified' ? 'Verified' : verifying ? 'Checking…' : 'Verify'}
           </Button>
-          <Button variant="danger" onClick={onDeleteQuestion} disabled={deleting}>
+          <Button variant="danger" onClick={() => setDeleteQuestionOpen(true)} disabled={deleting}>
             <Trash2 className="size-4" aria-hidden />
-            {deleting ? 'Deleting…' : 'Delete'}
+            Delete
           </Button>
         </div>
       </div>
@@ -309,6 +341,8 @@ export function QuestionEditor({
               totalPages={paper.pdfPages}
               cropping={uploading}
               onCrop={onCrop}
+              targetPage={targetPdfPage}
+              armedPlaceholder={armedPlaceholder}
             />
           ) : (
             <Card className="flex h-full flex-col items-center justify-center p-6 text-center">
@@ -377,15 +411,19 @@ export function QuestionEditor({
             <CardBody>
               <QuestionBody
                 body={fields.body}
-                renderImage={(placeholderId) => (
-                  <ImageChip
-                    placeholderId={placeholderId}
-                    questionId={question.id}
-                    resolved={resolvedIds.has(placeholderId)}
-                    armed={armedPlaceholder === placeholderId}
-                    onClick={() => setArmedPlaceholder(placeholderId)}
-                  />
-                )}
+                renderImage={(placeholderId) => {
+                  const img = images.find((i) => i.placeholderId === placeholderId);
+                  return (
+                    <ImageChip
+                      placeholderId={placeholderId}
+                      questionId={question.id}
+                      resolved={resolvedIds.has(placeholderId)}
+                      armed={armedPlaceholder === placeholderId}
+                      version={img ? new Date(img.createdAt).getTime() : undefined}
+                      onClick={() => setArmedPlaceholder(placeholderId)}
+                    />
+                  );
+                }}
               />
               {fields.type === 'mcq' && fields.options.length > 0 ? (
                 <ul className="mt-3 space-y-1.5 text-sm">
@@ -394,15 +432,19 @@ export function QuestionEditor({
                       <span className="font-semibold text-slate-500 dark:text-slate-400">{opt.key}.</span>
                       <QuestionBody
                         body={opt.body}
-                        renderImage={(placeholderId) => (
-                          <ImageChip
-                            placeholderId={placeholderId}
-                            questionId={question.id}
-                            resolved={resolvedIds.has(placeholderId)}
-                            armed={armedPlaceholder === placeholderId}
-                            onClick={() => setArmedPlaceholder(placeholderId)}
-                          />
-                        )}
+                        renderImage={(placeholderId) => {
+                          const img = images.find((i) => i.placeholderId === placeholderId);
+                          return (
+                            <ImageChip
+                              placeholderId={placeholderId}
+                              questionId={question.id}
+                              resolved={resolvedIds.has(placeholderId)}
+                              armed={armedPlaceholder === placeholderId}
+                              version={img ? new Date(img.createdAt).getTime() : undefined}
+                              onClick={() => setArmedPlaceholder(placeholderId)}
+                            />
+                          );
+                        }}
                       />
                     </li>
                   ))}
@@ -429,6 +471,7 @@ export function QuestionEditor({
                     <option value="physics">Physics</option>
                     <option value="chemistry">Chemistry</option>
                     <option value="maths">Maths</option>
+                    <option value="biology">Biology</option>
                   </Select>
                 </div>
                 <div>
@@ -470,6 +513,20 @@ export function QuestionEditor({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <Label>Source Page (PDF/Doc)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={fields.sourcePage ?? ''}
+                    onChange={(e) => {
+                      const p = e.target.value ? Number(e.target.value) : null;
+                      patchFields({ sourcePage: p });
+                      if (p) setTargetPdfPage(p);
+                    }}
+                    placeholder="e.g. 2"
+                  />
+                </div>
+                <div>
                   <Label>Difficulty (1–10)</Label>
                   <Input
                     type="number"
@@ -492,7 +549,7 @@ export function QuestionEditor({
                   <Label>Chapter</Label>
                   <Input value={fields.chapter} onChange={(e) => patchFields({ chapter: e.target.value })} />
                 </div>
-                <div>
+                <div className="col-span-2">
                   <Label>Topic</Label>
                   <Input value={fields.topic} onChange={(e) => patchFields({ topic: e.target.value })} />
                 </div>
@@ -506,31 +563,89 @@ export function QuestionEditor({
                 <CardTitle>Cropped & uploaded images</CardTitle>
               </CardHeader>
               <CardBody className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {images.map((img) => (
-                  <div key={img.id} className="group relative">
-                    <Image
-                      src={`/api/files/images/${question.id}/${img.placeholderId}`}
-                      alt={img.altText ?? img.placeholderId}
-                      width={160}
-                      height={120}
-                      className="h-24 w-full rounded border border-slate-200 bg-white object-cover dark:border-slate-700"
-                      unoptimized
-                    />
-                    <p className="mt-0.5 truncate text-[10px] text-slate-400 dark:text-slate-500">{img.placeholderId}</p>
-                    <button
-                      onClick={() => onDeleteImage(img)}
-                      className="absolute right-1 top-1 rounded bg-white/90 p-1 opacity-0 ring-1 ring-slate-200 group-hover:opacity-100 dark:bg-slate-800/90 dark:ring-slate-700"
-                      aria-label={`Delete ${img.placeholderId}`}
+                {images.map((img) => {
+                  const version = new Date(img.createdAt).getTime();
+                  const isArmed = armedPlaceholder === img.placeholderId;
+                  return (
+                    <div
+                      key={img.id}
+                      className={cn(
+                        'group relative rounded-lg border p-1 transition-all',
+                        isArmed
+                          ? 'border-accent-500 ring-2 ring-accent-400'
+                          : 'border-slate-200 bg-slate-50/50 dark:border-slate-700 dark:bg-slate-800/50'
+                      )}
                     >
-                      <Trash2 className="size-3 text-red-600 dark:text-red-400" />
-                    </button>
-                  </div>
-                ))}
+                      <Image
+                        src={`/api/files/images/${question.id}/${img.placeholderId}?v=${version}`}
+                        alt={img.altText ?? img.placeholderId}
+                        width={160}
+                        height={120}
+                        className="h-24 w-full rounded border border-slate-200 bg-white object-contain dark:border-slate-700 dark:bg-slate-900"
+                        unoptimized
+                      />
+                      <div className="mt-1 flex items-center justify-between gap-1 px-1">
+                        <p className="truncate text-xs font-mono font-medium text-slate-600 dark:text-slate-300">
+                          {img.placeholderId}
+                        </p>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setArmedPlaceholder(isArmed ? null : img.placeholderId)}
+                            className={cn(
+                              'rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                              isArmed
+                                ? 'bg-accent-500 text-slate-950 font-bold'
+                                : 'bg-slate-200 text-slate-700 hover:bg-brand-50 hover:text-brand-700 dark:bg-slate-700 dark:text-slate-200'
+                            )}
+                            title={isArmed ? 'Cancel crop' : 'Re-crop from PDF'}
+                          >
+                            <Crop className="size-3 inline mr-0.5" />
+                            {isArmed ? 'Cropping' : 'Re-crop'}
+                          </button>
+                          <button
+                            onClick={() => setDeleteImageTarget(img)}
+                            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                            aria-label={`Delete ${img.placeholderId}`}
+                            title="Delete image"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </CardBody>
             </Card>
           ) : null}
         </div>
       </div>
+
+      {/* Delete Question Dialog */}
+      <ConfirmDialog
+        isOpen={deleteQuestionOpen}
+        onClose={() => !deleting && setDeleteQuestionOpen(false)}
+        onConfirm={performDeleteQuestion}
+        loading={deleting}
+        title="Delete Question"
+        description={`Are you sure you want to delete question ${question.humanCode ?? question.id}? This action cannot be undone.`}
+        confirmText="Delete Question"
+        tone="danger"
+      />
+
+      {/* Delete Image Dialog */}
+      <ConfirmDialog
+        isOpen={deleteImageTarget !== null}
+        onClose={() => setDeleteImageTarget(null)}
+        onConfirm={() => {
+          if (deleteImageTarget) return performDeleteImage(deleteImageTarget);
+        }}
+        title="Remove Cropped Image"
+        description={`Are you sure you want to remove image [[IMG:${deleteImageTarget?.placeholderId}]]? You will need to re-crop it.`}
+        confirmText="Remove Image"
+        tone="danger"
+      />
     </div>
   );
 }
@@ -540,19 +655,22 @@ function ImageChip({
   questionId,
   resolved,
   armed,
+  version,
   onClick,
 }: {
   placeholderId: string;
   questionId: string;
   resolved: boolean;
   armed: boolean;
+  version?: number;
   onClick: () => void;
 }) {
   if (resolved) {
+    const v = version ?? Date.now();
     return (
-      <button onClick={onClick} className="mx-0.5 inline-block align-middle">
+      <button onClick={onClick} className="mx-0.5 inline-block align-middle" title="Click to re-crop this image">
         <Image
-          src={`/api/files/images/${questionId}/${placeholderId}`}
+          src={`/api/files/images/${questionId}/${placeholderId}?v=${v}`}
           alt={placeholderId}
           width={160}
           height={100}

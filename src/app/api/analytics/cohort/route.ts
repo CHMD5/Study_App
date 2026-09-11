@@ -42,7 +42,7 @@ export const GET = withApi(async () => {
      JOIN questions q ON q.id = aa.question_id
      WHERE a.status <> 'in_progress' AND aa.response IS NOT NULL
      GROUP BY q.subject, COALESCE(q.chapter, 'General')
-     HAVING count(aa.question_id) >= 2
+     HAVING count(aa.question_id) >= 5
      ORDER BY accuracy_pct ASC, total_answers DESC
      LIMIT 10`,
   );
@@ -63,7 +63,7 @@ export const GET = withApi(async () => {
     batch: string | null;
     tests_taken: number;
     avg_score: number;
-    avg_percentile: number;
+    avg_percentile: number | null;
   }>(
     `SELECT
        p.id as student_id,
@@ -89,7 +89,37 @@ export const GET = withApi(async () => {
     batch: r.batch ?? 'General',
     testsTaken: Number(r.tests_taken),
     avgScore: Number(r.avg_score),
-    avgPercentile: r.avg_percentile !== null ? Number(r.avg_percentile) : 100,
+    avgPercentile: r.avg_percentile !== null ? Number(r.avg_percentile) : null,
+  }));
+
+  // Batch-level performance overview
+  const batchStatsRes = await db.$client.query<{
+    batch: string | null;
+    student_count: number;
+    attempt_count: number;
+    avg_score: number | null;
+    avg_percentile: number | null;
+  }>(
+    `SELECT
+       p.batch,
+       count(DISTINCT p.id)::int as student_count,
+       count(a.id)::int as attempt_count,
+       ROUND(avg(a.total_marks)::numeric, 1) as avg_score,
+       ROUND(avg(r.percentile)::numeric, 1) as avg_percentile
+     FROM profiles p
+     LEFT JOIN attempts a ON a.student_id = p.id AND a.status <> 'in_progress'
+     LEFT JOIN v_test_ranks r ON r.test_id = a.test_id AND r.student_id = a.student_id AND r.attempt_no = a.attempt_no
+     WHERE p.role = 'student'
+     GROUP BY p.batch
+     ORDER BY avg_score DESC NULLS LAST`,
+  );
+
+  const batchSummaries = batchStatsRes.rows.map((b) => ({
+    batch: b.batch ?? 'General',
+    studentCount: Number(b.student_count),
+    attemptCount: Number(b.attempt_count),
+    avgScore: b.avg_score !== null ? Number(b.avg_score) : 0,
+    avgPercentile: b.avg_percentile !== null ? Number(b.avg_percentile) : null,
   }));
 
   return json({
@@ -98,6 +128,7 @@ export const GET = withApi(async () => {
       totalPublishedTests: testCount?.count ?? 0,
       totalAttemptsSubmitted: attemptCount?.count ?? 0,
     },
+    batchSummaries,
     weakChapters,
     studentRankings,
   });

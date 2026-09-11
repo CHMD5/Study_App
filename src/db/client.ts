@@ -5,6 +5,7 @@ import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
 import * as schema from './schema';
 import { MIGRATIONS_DIR, PGDATA_DIR, ensureDataDirs } from '@/lib/paths';
 import { sweepExpiredAttempts } from '@/lib/sweep';
+import { withDbLock } from '@/lib/db-lock';
 
 export type Db = PgliteDatabase<typeof schema> & { $client: PGlite };
 
@@ -98,11 +99,19 @@ export function getDbBundle(): Promise<{ pg: PGlite; db: Db }> {
 }
 
 export async function getDb(): Promise<Db> {
-  return (await getDbBundle()).db;
+  const bundle = await getDbBundle();
+  if (process.env.NODE_ENV !== 'production') {
+    await runMigrations(bundle.pg).catch((err) => console.error('[db] dev migration check failed', err));
+  }
+  return bundle.db;
 }
 
 export async function getPg(): Promise<PGlite> {
-  return (await getDbBundle()).pg;
+  const bundle = await getDbBundle();
+  if (process.env.NODE_ENV !== 'production') {
+    await runMigrations(bundle.pg).catch((err) => console.error('[db] dev migration check failed', err));
+  }
+  return bundle.pg;
 }
 
 /**
@@ -117,34 +126,36 @@ export async function getPg(): Promise<PGlite> {
  * drizzle/ are read. That is what keeps 9999_rls.sql out of the local database.
  */
 async function runMigrations(pg: PGlite): Promise<void> {
-  await pg.exec(`
-    CREATE TABLE IF NOT EXISTS _migrations (
-      name       text PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
+  return withDbLock(async () => {
+    await pg.exec(`
+      CREATE TABLE IF NOT EXISTS _migrations (
+        name       text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+
+    const applied = new Set(
+      (await pg.query<{ name: string }>('SELECT name FROM _migrations')).rows.map((r) => r.name),
     );
-  `);
 
-  const applied = new Set(
-    (await pg.query<{ name: string }>('SELECT name FROM _migrations')).rows.map((r) => r.name),
-  );
+    const files = fs
+      .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith('.sql'))
+      .map((e) => e.name)
+      .sort();
 
-  const files = fs
-    .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.sql'))
-    .map((e) => e.name)
-    .sort();
-
-  for (const name of files) {
-    if (applied.has(name)) continue;
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, name), 'utf8');
-    try {
-      await pg.exec(sql);
-      await pg.query('INSERT INTO _migrations (name) VALUES ($1)', [name]);
-      console.log(`[db] applied migration ${name}`);
-    } catch (err) {
-      throw new Error(`Migration ${name} failed: ${(err as Error).message}`);
+    for (const name of files) {
+      if (applied.has(name)) continue;
+      const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, name), 'utf8');
+      try {
+        await pg.exec(sql);
+        await pg.query('INSERT INTO _migrations (name) VALUES ($1)', [name]);
+        console.log(`[db] applied migration ${name}`);
+      } catch (err) {
+        throw new Error(`Migration ${name} failed: ${(err as Error).message}`);
+      }
     }
-  }
+  });
 }
 
 /** Used by scripts that need to release the data-directory lock before exiting. */

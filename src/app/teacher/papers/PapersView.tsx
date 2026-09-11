@@ -4,43 +4,52 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { Columns2, FileText, Trash2, UploadCloud } from 'lucide-react';
-import { Alert, Badge, Button, buttonClass, Card, CardBody, EmptyState, Input, Label, Spinner } from '@/components/ui';
+import { Alert, Badge, Button, buttonClass, Card, CardBody, ConfirmDialog, EmptyState, Input, Label, Spinner, useToast } from '@/components/ui';
 import type { Paper } from '@/db/schema';
 
 export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [papers, setPapers] = useState(initialPapers);
   const [showForm, setShowForm] = useState(initialPapers.length === 0);
+  const [deleteTarget, setDeleteTarget] = useState<{ paper: Paper; cascade?: boolean; count?: number } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function onCreated(paper: Paper) {
     setPapers((prev) => [paper, ...prev]);
     setShowForm(false);
+    toast.success(`Registered paper "${paper.title}"`);
   }
 
-  async function onDelete(paper: Paper) {
-    if (!confirm(`Delete "${paper.title}"? This cannot be undone.`)) return;
+  async function performDelete(paper: Paper, cascade = false) {
+    setDeleting(true);
+    try {
+      const url = cascade ? `/api/papers/${paper.id}?cascade=true` : `/api/papers/${paper.id}`;
+      const res = await fetch(url, { method: 'DELETE' });
 
-    let res = await fetch(`/api/papers/${paper.id}`, { method: 'DELETE' });
-
-    if (res.status === 409) {
-      const body = await res.json().catch(() => ({}));
-      if (body.error === 'paper_has_questions') {
-        const count = body.questionCount ?? 'some';
-        const confirmCascade = confirm(
-          `${count} question(s) were extracted from "${paper.title}" and still exist. ` +
-            `Delete the paper AND all ${count} question(s)? This cannot be undone.`,
-        );
-        if (!confirmCascade) return;
-        res = await fetch(`/api/papers/${paper.id}?cascade=true`, { method: 'DELETE' });
+      if (res.status === 409 && !cascade) {
+        const body = await res.json().catch(() => ({}));
+        if (body.error === 'paper_has_questions') {
+          const count = body.questionCount ?? 0;
+          setDeleteTarget({ paper, cascade: true, count });
+          setDeleting(false);
+          return;
+        }
       }
-    }
 
-    if (res.ok) {
-      setPapers((prev) => prev.filter((p) => p.id !== paper.id));
-      router.refresh();
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(body.message ?? 'Could not delete this paper.');
+      if (res.ok) {
+        setPapers((prev) => prev.filter((p) => p.id !== paper.id));
+        toast.success(`Deleted paper "${paper.title}"`);
+        setDeleteTarget(null);
+        router.refresh();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.message ?? 'Could not delete this paper.');
+      }
+    } catch {
+      toast.error('Network error: Could not connect to server.');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -82,7 +91,7 @@ export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
                     </div>
                   </div>
                   <button
-                    onClick={() => onDelete(paper)}
+                    onClick={() => setDeleteTarget({ paper })}
                     aria-label={`Delete ${paper.title}`}
                     className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                   >
@@ -126,6 +135,24 @@ export function PapersView({ initialPapers }: { initialPapers: Paper[] }) {
           ))}
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) return performDelete(deleteTarget.paper, deleteTarget.cascade);
+        }}
+        loading={deleting}
+        title={deleteTarget?.cascade ? 'Delete Paper and Extracted Questions?' : 'Delete Paper'}
+        description={
+          deleteTarget?.cascade
+            ? `${deleteTarget.count ?? 'Some'} question(s) were extracted from "${deleteTarget.paper.title}" and still exist. Delete the paper AND all ${deleteTarget.count ?? ''} question(s)? This cannot be undone.`
+            : `Are you sure you want to delete "${deleteTarget?.paper.title}"? This cannot be undone.`
+        }
+        confirmText={deleteTarget?.cascade ? 'Delete All' : 'Delete'}
+        tone="danger"
+      />
     </div>
   );
 }

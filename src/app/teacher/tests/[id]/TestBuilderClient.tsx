@@ -7,7 +7,10 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart3,
+  Check,
+  Copy,
   ExternalLink,
+  Eye,
   Layers,
   Plus,
   Save,
@@ -16,7 +19,24 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { Alert, Badge, Button, buttonClass, Card, CardBody, CardHeader, CardTitle, Input, Label, Select, Spinner, Textarea } from '@/components/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  buttonClass,
+  Card,
+  CardBody,
+  CardHeader,
+  CardTitle,
+  Dialog,
+  Input,
+  Label,
+  Select,
+  Spinner,
+  StatTile,
+  Textarea,
+  useToast,
+} from '@/components/ui';
 import { QuestionBody } from '@/components/Katex';
 import { fromLocalInputValue, toLocalInputValue } from '@/lib/datetime';
 
@@ -27,7 +47,7 @@ type AssignedQuestion = {
   marksCorrect: string | number;
   marksWrong: string | number;
   marksUnattempted: string | number;
-  subject: 'physics' | 'chemistry' | 'maths';
+  subject: 'physics' | 'chemistry' | 'maths' | 'biology';
   type: 'mcq' | 'integer';
   status: 'draft' | 'verified' | 'archived';
   body: string;
@@ -42,7 +62,7 @@ type AssignedQuestion = {
 type BankQuestion = {
   id: string;
   humanCode: string | null;
-  subject: 'physics' | 'chemistry' | 'maths';
+  subject: 'physics' | 'chemistry' | 'maths' | 'biology';
   type: 'mcq' | 'integer';
   status: 'draft' | 'verified' | 'archived';
   body: string;
@@ -63,6 +83,7 @@ export function TestBuilderClient({
   allBankQuestions: BankQuestion[];
 }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [test, setTest] = useState(initialTest);
   const [assigned, setAssigned] = useState<AssignedQuestion[]>(initialAssignedQuestions);
   const [activeTab, setActiveTab] = useState<'questions' | 'picker' | 'settings'>('questions');
@@ -76,6 +97,33 @@ export function TestBuilderClient({
   // Question order and marks live in React state until "Save Questions" is
   // pressed, so navigating away silently discarded them with no warning.
   const [questionsDirty, setQuestionsDirty] = useState(false);
+  const [cloning, setCloning] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+
+  // Debounced autosave (1500ms)
+  useEffect(() => {
+    if (!questionsDirty || saving) return;
+    const timer = setTimeout(() => {
+      saveQuestions();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [questionsDirty, assigned]);
+
+  async function handleCloneTest() {
+    setCloning(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/clone`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || 'Failed to clone test');
+      toast.success(json.message);
+      router.push(`/teacher/tests/${json.test.id}`);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setCloning(false);
+    }
+  }
 
   useEffect(() => {
     if (!questionsDirty) return;
@@ -112,7 +160,7 @@ export function TestBuilderClient({
   const assignedIds = useMemo(() => new Set(assigned.map((q) => q.questionId)), [assigned]);
 
   const subjectCounts = useMemo(() => {
-    const counts = { physics: 0, chemistry: 0, maths: 0 };
+    const counts = { physics: 0, chemistry: 0, maths: 0, biology: 0 };
     for (const q of assigned) {
       if (counts[q.subject] !== undefined) counts[q.subject]++;
     }
@@ -387,13 +435,50 @@ export function TestBuilderClient({
             Analytics
           </Link>
 
-          {questionsDirty && (
-            <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Unsaved changes</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleCloneTest}
+            disabled={cloning}
+            title="Create an editable duplicate draft of this test"
+          >
+            {cloning ? <Spinner className="mr-1 size-3.5" /> : <Copy className="mr-1 size-3.5" />}
+            Clone Draft
+          </Button>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setPreviewIndex(0);
+              setPreviewOpen(true);
+            }}
+            disabled={assigned.length === 0}
+            title="Preview test questions in student exam mode"
+          >
+            <Eye className="mr-1 size-3.5" />
+            Preview
+          </Button>
+
+          <div className="mx-1 hidden h-4 w-px bg-slate-200 sm:block dark:bg-slate-800" />
+
+          {saving ? (
+            <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+              <Spinner className="size-3" /> Autosaving…
+            </span>
+          ) : saveSuccess ? (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+              <Check className="size-3" /> Saved
+            </span>
+          ) : questionsDirty ? (
+            <Badge tone="amber">Unsaved changes</Badge>
+          ) : (
+            <span className="text-xs text-slate-400 dark:text-slate-500">All changes saved</span>
           )}
 
           <Button variant="secondary" size="sm" onClick={saveQuestions} disabled={saving || !questionsDirty}>
             {saving ? <Spinner className="size-3.5" /> : <Save className="mr-1 size-3.5" />}
-            {saveSuccess ? 'Saved!' : 'Save Questions'}
+            Save
           </Button>
 
           {!test.isPublished ? (
@@ -407,8 +492,6 @@ export function TestBuilderClient({
               Publish Test
             </Button>
           ) : (
-            // Unpublish had no UI at all, so a test published by mistake could
-            // not be withdrawn. The API refuses once attempts exist.
             <Button variant="danger" size="sm" onClick={handleUnpublish} disabled={publishing}>
               {publishing ? <Spinner className="size-3.5" /> : null}
               Unpublish
@@ -489,37 +572,13 @@ export function TestBuilderClient({
       {activeTab === 'questions' && (
         <div className="space-y-4">
           {/* Summary Metric Chips */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <Card>
-              <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Total Questions</p>
-                <p className="tnum text-xl font-bold text-slate-900 dark:text-slate-100">{assigned.length}</p>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Physics</p>
-                <p className="tnum text-xl font-bold text-blue-700 dark:text-blue-400">{subjectCounts.physics}</p>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Chemistry</p>
-                <p className="tnum text-xl font-bold text-emerald-700 dark:text-emerald-400">{subjectCounts.chemistry}</p>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Maths</p>
-                <p className="tnum text-xl font-bold text-purple-700 dark:text-purple-400">{subjectCounts.maths}</p>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody className="py-2.5 text-center">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Max Marks</p>
-                <p className="tnum text-xl font-bold text-amber-700 dark:text-amber-400">{totalMaxMarks}</p>
-              </CardBody>
-            </Card>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+            <StatTile label="Total Questions" value={assigned.length} tone="slate" />
+            <StatTile label="Physics" value={subjectCounts.physics} tone="blue" />
+            <StatTile label="Chemistry" value={subjectCounts.chemistry} tone="emerald" />
+            <StatTile label="Maths" value={subjectCounts.maths} tone="amber" />
+            <StatTile label="Biology" value={subjectCounts.biology} tone="purple" />
+            <StatTile label="Max Marks" value={totalMaxMarks} tone="brand" />
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -577,7 +636,9 @@ export function TestBuilderClient({
                                   ? 'brand'
                                   : q.subject === 'chemistry'
                                   ? 'green'
-                                  : 'amber'
+                                  : q.subject === 'maths'
+                                  ? 'amber'
+                                  : 'purple'
                               }
                             >
                               {q.subject.toUpperCase()}
@@ -598,7 +659,7 @@ export function TestBuilderClient({
                                 <QuestionBody
                                   body={q.body}
                                   renderImage={(id) => (
-                                    <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[10px] text-brand-700 dark:bg-brand-950 dark:text-brand-300">
+                                    <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-xs text-brand-700 dark:bg-brand-950 dark:text-brand-300">
                                       [IMG:{id}]
                                     </span>
                                   )}
@@ -623,7 +684,7 @@ export function TestBuilderClient({
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="flex items-center gap-1.5 rounded-md bg-slate-50 p-1.5 ring-1 ring-slate-200 dark:bg-slate-950 dark:ring-slate-800">
                           <div className="text-center">
-                            <span className="block text-[10px] font-bold text-emerald-700 dark:text-emerald-400">+Correct</span>
+                            <span className="block text-xs font-bold text-emerald-700 dark:text-emerald-400">+Correct</span>
                             <input
                               type="number"
                               value={q.marksCorrect}
@@ -633,7 +694,7 @@ export function TestBuilderClient({
                           </div>
 
                           <div className="text-center">
-                            <span className="block text-[10px] font-bold text-red-700 dark:text-red-400">-Wrong</span>
+                            <span className="block text-xs font-bold text-red-700 dark:text-red-400">-Wrong</span>
                             <input
                               type="number"
                               value={q.marksWrong}
@@ -643,7 +704,7 @@ export function TestBuilderClient({
                           </div>
 
                           <div className="text-center">
-                            <span className="block text-[10px] font-bold text-slate-500 dark:text-slate-400">Unatt</span>
+                            <span className="block text-xs font-bold text-slate-500 dark:text-slate-400">Unatt</span>
                             <input
                               type="number"
                               value={q.marksUnattempted}
@@ -712,6 +773,7 @@ export function TestBuilderClient({
                     <option value="physics">Physics</option>
                     <option value="chemistry">Chemistry</option>
                     <option value="maths">Mathematics</option>
+                    <option value="biology">Biology</option>
                   </Select>
                 </div>
 
@@ -784,7 +846,9 @@ export function TestBuilderClient({
                             ? 'brand'
                             : q.subject === 'chemistry'
                             ? 'green'
-                            : 'amber'
+                            : q.subject === 'maths'
+                            ? 'amber'
+                            : 'purple'
                         }
                       >
                         {q.subject.toUpperCase()}
@@ -802,7 +866,7 @@ export function TestBuilderClient({
                       <QuestionBody
                         body={q.body}
                         renderImage={(id) => (
-                          <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[10px] text-brand-700 dark:bg-brand-950 dark:text-brand-300">
+                          <span className="rounded bg-brand-50 px-1 py-0.5 font-mono text-xs text-brand-700 dark:bg-brand-950 dark:text-brand-300">
                             [IMG:{id}]
                           </span>
                         )}
@@ -950,6 +1014,154 @@ export function TestBuilderClient({
             </CardBody>
           </Card>
         </form>
+      )}
+
+      {/* Student View Preview Modal */}
+      {previewOpen && assigned[previewIndex] && (
+        <Dialog
+          isOpen={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          size="xl"
+          title={
+            <div className="flex items-center justify-between gap-4">
+              <span>
+                Student Preview: Question {previewIndex + 1} of {assigned.length}
+              </span>
+              <span className="font-mono text-xs font-normal text-slate-500">
+                {assigned[previewIndex].subject.toUpperCase()} · {assigned[previewIndex].type.toUpperCase()}
+              </span>
+            </div>
+          }
+          footer={
+            <div className="flex w-full items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPreviewIndex((i) => Math.max(0, i - 1))}
+                  disabled={previewIndex === 0}
+                >
+                  ← Previous
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPreviewIndex((i) => Math.min(assigned.length - 1, i + 1))}
+                  disabled={previewIndex === assigned.length - 1}
+                >
+                  Next →
+                </Button>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(false)}>
+                Close Preview
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            {/* Quick Question Picker Strip */}
+            <div className="flex items-center gap-1 overflow-x-auto rounded-lg bg-slate-50 p-2 dark:bg-slate-950">
+              {assigned.map((q, idx) => (
+                <button
+                  key={q.questionId}
+                  onClick={() => setPreviewIndex(idx)}
+                  className={`flex size-7 shrink-0 items-center justify-center rounded text-xs font-bold transition-all ${
+                    idx === previewIndex
+                      ? 'bg-brand-700 text-white shadow-xs dark:bg-brand-600'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  {idx + 1}
+                </button>
+              ))}
+            </div>
+
+            {/* Question Info Bar */}
+            <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-1.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              <div className="flex items-center gap-2">
+                <Badge
+                  tone={
+                    assigned[previewIndex].subject === 'physics'
+                      ? 'brand'
+                      : assigned[previewIndex].subject === 'chemistry'
+                      ? 'green'
+                      : assigned[previewIndex].subject === 'maths'
+                      ? 'amber'
+                      : 'purple'
+                  }
+                >
+                  {assigned[previewIndex].subject}
+                </Badge>
+                {assigned[previewIndex].chapter ? <span>{assigned[previewIndex].chapter}</span> : null}
+              </div>
+              <div className="font-mono">
+                <span className="font-bold text-emerald-600">+{assigned[previewIndex].marksCorrect}.00</span>
+                <span className="mx-1 text-slate-400">/</span>
+                <span className="font-bold text-red-600">{assigned[previewIndex].marksWrong}.00</span>
+              </div>
+            </div>
+
+            {/* Question Body */}
+            <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed dark:border-slate-800 dark:bg-slate-900">
+              <QuestionBody
+                body={assigned[previewIndex].body}
+                renderImage={(placeholderId) => (
+                  <div className="my-2 overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-950">
+                    <img
+                      src={`/api/files/images/${assigned[previewIndex].questionId}/${placeholderId}`}
+                      alt="Question figure"
+                      className="max-h-64 object-contain"
+                    />
+                  </div>
+                )}
+              />
+            </div>
+
+            {/* Options / Answer Area */}
+            {assigned[previewIndex].type === 'mcq' ? (
+              <div className="space-y-2">
+                <Label>Answer Options (Select One):</Label>
+                <div className="grid gap-2">
+                  {(assigned[previewIndex].options ?? []).map((opt: any) => (
+                    <div
+                      key={opt.key}
+                      className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+                    >
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-50 text-xs font-bold dark:border-slate-700 dark:bg-slate-800">
+                        {opt.key}
+                      </span>
+                      <div className="flex-1">
+                        <QuestionBody
+                          body={opt.body}
+                          renderImage={(imgId) => (
+                            <img
+                              src={`/api/files/images/${assigned[previewIndex].questionId}/${imgId}`}
+                              alt="Option figure"
+                              className="my-1 max-h-32 object-contain"
+                            />
+                          )}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label>Numerical Value Entry (Student Input):</Label>
+                <input
+                  type="text"
+                  disabled
+                  placeholder="e.g. 42 or 3.14"
+                  className="h-10 w-48 rounded-md border border-slate-300 bg-slate-50 px-3 text-center font-mono font-bold text-slate-400 dark:border-slate-700 dark:bg-slate-950"
+                />
+                <p className="text-xs text-slate-400">
+                  Accepts integer or decimal input.
+                </p>
+              </div>
+            )}
+          </div>
+        </Dialog>
       )}
     </div>
   );

@@ -42,11 +42,11 @@ export function KatexSpan({ tex, display = false }: { tex: string; display?: boo
 export type ImageResolver = (placeholderId: string) => React.ReactNode;
 
 /**
- * Renders a full question `body`: plain text/markdown-lite passed through as-is
- * (line breaks, **bold**, tables), $inline$ and $$display$$ math via KaTeX, and
- * [[IMG:id]] placeholders via the caller-supplied resolver — the editor (stage
- * 5) resolves them to an <img>, the crop tool resolves them to "unresolved"
- * chips.
+ * Renders a full question `body`: plain text passed through as-is (whitespace-pre-wrap,
+ * line breaks), $inline$ and $$display$$ math via KaTeX, and [[IMG:id]] placeholders
+ * via the caller-supplied resolver — the editor resolves them to an <img>, the crop
+ * tool resolves them to "unresolved" chips. (Note: standard Markdown like **bold** is
+ * not parsed).
  */
 export function QuestionBody({
   body,

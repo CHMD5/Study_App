@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { apiStudent } from '@/lib/auth';
 import { json, withApi } from '@/lib/http';
 import { getDb } from '@/db/client';
@@ -8,7 +8,9 @@ export const GET = withApi(async () => {
   const session = await apiStudent();
   const db = await getDb();
 
-  // Completed attempts by this student
+  // Completed attempts by this student whose results are available.
+  // Gated on results_policy: attempts for 'on_release' tests with released_at IS NULL
+  // are excluded so scores/rankings are not leaked before teacher release.
   const studentAttempts = await db
     .select({
       attemptId: attempts.id,
@@ -23,7 +25,13 @@ export const GET = withApi(async () => {
     })
     .from(attempts)
     .innerJoin(tests, eq(tests.id, attempts.testId))
-    .where(and(eq(attempts.studentId, session.userId), sql`${attempts.status} <> 'in_progress'`))
+    .where(
+      and(
+        eq(attempts.studentId, session.userId),
+        sql`${attempts.status} <> 'in_progress'`,
+        or(eq(tests.resultsPolicy, 'immediate'), isNotNull(tests.releasedAt)),
+      ),
+    )
     .orderBy(desc(attempts.submittedAt));
 
   if (studentAttempts.length === 0) {
@@ -36,6 +44,7 @@ export const GET = withApi(async () => {
         physics: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
         chemistry: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
         maths: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
+        biology: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
       },
       chapterBreakdown: [],
     });
@@ -72,6 +81,7 @@ export const GET = withApi(async () => {
     physics: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
     chemistry: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
     maths: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
+    biology: { correct: 0, attempted: 0, total: 0, accuracy: 0 },
   };
 
   const chapterMap = new Map<string, { chapter: string; subject: string; correct: number; attempted: number; total: number }>();
@@ -115,12 +125,14 @@ export const GET = withApi(async () => {
   const recentTests = studentAttempts.map((a) => {
     const rInfo = ranksMap.get(`${a.testId}-${a.attemptNo}`);
     const score = Number(a.totalMarks ?? 0);
-    const pctl = rInfo ? Number(rInfo.percentile) : 100;
-    const rank = rInfo ? Number(rInfo.rank) : 1;
+    const pctl = rInfo && rInfo.percentile !== null ? Number(rInfo.percentile) : null;
+    const rank = rInfo && rInfo.rank !== null ? Number(rInfo.rank) : null;
 
     totalScore += score;
-    totalPercentile += pctl;
-    percentileCount++;
+    if (pctl !== null) {
+      totalPercentile += pctl;
+      percentileCount++;
+    }
 
     return {
       attemptId: a.attemptId,
@@ -139,7 +151,8 @@ export const GET = withApi(async () => {
   return json({
     totalAttempts: studentAttempts.length,
     avgScore: Math.round((totalScore / studentAttempts.length) * 10) / 10,
-    avgPercentile: percentileCount > 0 ? Math.round((totalPercentile / percentileCount) * 10) / 10 : 100,
+    avgPercentile:
+      percentileCount > 0 ? Math.round((totalPercentile / percentileCount) * 10) / 10 : null,
     recentTests,
     subjectBreakdown: subjects,
     chapterBreakdown,

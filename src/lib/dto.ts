@@ -12,7 +12,7 @@ export type StudentQuestionDto = {
   body: string;
   type: 'mcq' | 'integer';
   options: QuestionOption[];
-  subject: 'physics' | 'chemistry' | 'maths';
+  subject: 'physics' | 'chemistry' | 'maths' | 'biology';
   chapter: string | null;
   topic: string | null;
   marks: StudentMarksConfig;

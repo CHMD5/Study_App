@@ -17,7 +17,7 @@ type ReviewQuestion = {
   solution: string | null;
   difficulty: number | null;
   expectedTimeS: number | null;
-  subject: 'physics' | 'chemistry' | 'maths';
+  subject: 'physics' | 'chemistry' | 'maths' | 'biology';
   chapter: string | null;
   topic: string | null;
   marks: {
@@ -191,30 +191,30 @@ export function ResultReviewClient({
         {/* Hero KPI metrics grid */}
         <div className="mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-6 sm:grid-cols-5">
           <div className="rounded-lg bg-white/5 p-3 text-center">
-            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Rank</p>
+            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Rank</p>
             <p className="mt-0.5 text-xl font-bold text-white">
               #{data.rank} <span className="text-xs font-normal text-slate-400">of {data.totalParticipants}</span>
             </p>
           </div>
 
           <div className="rounded-lg bg-white/5 p-3 text-center">
-            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Percentile</p>
+            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Percentile</p>
             <p className="mt-0.5 text-xl font-bold text-accent-400">{data.percentile} %ile</p>
           </div>
 
           <div className="rounded-lg bg-white/5 p-3 text-center">
             <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Accuracy</p>
             <p className="tnum mt-0.5 text-xl font-bold text-emerald-400">{data.summary.accuracy}%</p>
-            <p className="text-[10px] text-slate-400">of attempted</p>
+            <p className="text-xs text-slate-400">of attempted</p>
           </div>
 
           <div className="rounded-lg bg-white/5 p-3 text-center">
-            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Time Spent</p>
+            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Time Spent</p>
             <p className="mt-0.5 text-xl font-bold text-white">{Math.round(data.totalTimeS / 60)} min</p>
           </div>
 
           <div className="col-span-2 rounded-lg bg-white/5 p-3 text-center sm:col-span-1">
-            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Correct / Wrong</p>
+            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Correct / Wrong</p>
             <p className="mt-0.5 text-xl font-bold text-white">
               <span className="text-emerald-400">{data.summary.correctCount}</span>
               <span className="mx-1 text-slate-400">/</span>
@@ -227,7 +227,7 @@ export function ResultReviewClient({
       {/* 2. Subject Breakdown Cards */}
       <div className="grid gap-3 sm:grid-cols-3">
         {/* Only the subjects this paper actually contains. */}
-        {(['physics', 'chemistry', 'maths'] as const)
+        {(['physics', 'chemistry', 'maths', 'biology'] as const)
           .filter((s) => (data.summary.subjectScores[s]?.total ?? 0) > 0)
           .map((s) => {
             const stats = data.summary.subjectScores[s] ?? { marks: 0, maxMarks: 0, correct: 0, total: 0 };
@@ -243,7 +243,7 @@ export function ResultReviewClient({
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       {s}
                     </span>
-                    <Badge tone={s === 'physics' ? 'brand' : s === 'chemistry' ? 'green' : 'amber'}>
+                    <Badge tone={s === 'physics' ? 'brand' : s === 'chemistry' ? 'green' : s === 'maths' ? 'amber' : 'purple'}>
                       {stats.marks} / {stats.maxMarks} M
                     </Badge>
                   </div>
@@ -258,7 +258,13 @@ export function ResultReviewClient({
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                     <div
                       className={`h-full ${
-                        s === 'physics' ? 'bg-brand-600' : s === 'chemistry' ? 'bg-emerald-600' : 'bg-amber-500'
+                        s === 'physics'
+                          ? 'bg-brand-600'
+                          : s === 'chemistry'
+                          ? 'bg-emerald-600'
+                          : s === 'maths'
+                          ? 'bg-amber-500'
+                          : 'bg-purple-600'
                       }`}
                       style={{
                         width: `${Math.max(0, Math.min(100, (stats.marks / Math.max(1, stats.maxMarks)) * 100))}%`,
@@ -280,7 +286,7 @@ export function ResultReviewClient({
           <div className="flex flex-wrap items-center gap-2">
             {/* Subject Filters */}
             <div className="flex rounded-md bg-slate-100 p-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-              {(['all', 'physics', 'chemistry', 'maths'] as const).map((s) => (
+              {(['all', 'physics', 'chemistry', 'maths', 'biology'] as const).map((s) => (
                 <button
                   key={s}
                   onClick={() => setFilterSubject(s)}
@@ -343,7 +349,9 @@ export function ResultReviewClient({
                             ? 'brand'
                             : q.subject === 'chemistry'
                             ? 'green'
-                            : 'amber'
+                            : q.subject === 'maths'
+                            ? 'amber'
+                            : 'purple'
                         }
                       >
                         {q.subject.toUpperCase()}
@@ -373,7 +381,7 @@ export function ResultReviewClient({
 
                       {/* Overtime warning flag */}
                       {q.isOvertime && (
-                        <Badge tone="amber" className="text-[10px]">
+                        <Badge tone="amber" className="text-xs">
                           Overtime ({timeTakenSec}s &gt; {Math.round(expectedSec * 1.5)}s)
                         </Badge>
                       )}
@@ -436,12 +444,12 @@ export function ResultReviewClient({
                                 />
                               </div>
                               {isCorrectKey && (
-                                <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-xs font-bold text-white">
                                   Correct Key
                                 </span>
                               )}
                               {isStudentPick && !isCorrectKey && (
-                                <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                <span className="rounded bg-red-600 px-1.5 py-0.5 text-xs font-bold text-white">
                                   Your Choice
                                 </span>
                               )}

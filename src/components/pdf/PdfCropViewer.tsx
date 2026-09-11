@@ -35,6 +35,8 @@ interface PdfCropViewerProps {
   totalPages: number | null;
   onCrop: (args: { sourcePage: number; cropRect: CropRect; blob: Blob }) => void;
   cropping?: boolean;
+  targetPage?: number | null;
+  armedPlaceholder?: string | null;
 }
 
 /**
@@ -63,7 +65,7 @@ function PdfPageItem({
   dragState: DragState | null;
   onStartDrag: (pageNo: number, e: React.PointerEvent, canvas: HTMLCanvasElement | null) => void;
   onMoveDrag: (e: React.PointerEvent) => void;
-  onEndDrag: () => void;
+  onEndDrag: (e?: React.PointerEvent) => void;
   cropping?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -266,6 +268,8 @@ export function PdfCropViewer({
   totalPages,
   onCrop,
   cropping = false,
+  targetPage = null,
+  armedPlaceholder = null,
 }: PdfCropViewerProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const docRef = useRef<PDFDocumentProxy | null>(null);
@@ -400,14 +404,21 @@ export function PdfCropViewer({
   }, [pageCount]);
 
   // Scroll to a specific page
-  const scrollToPage = useCallback((targetPage: number) => {
-    const pageNo = Math.max(1, Math.min(pageCount, targetPage));
+  const scrollToPage = useCallback((targetPageNum: number) => {
+    const pageNo = Math.max(1, Math.min(pageCount, targetPageNum));
     setActivePage(pageNo);
     const el = document.getElementById(`pdf-page-${pageNo}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [pageCount]);
+
+  // React to external targetPage changes
+  useEffect(() => {
+    if (targetPage && targetPage >= 1 && pageCount > 0) {
+      scrollToPage(targetPage);
+    }
+  }, [targetPage, pageCount, scrollToPage]);
 
   // Zoom controls
   const handleZoomIn = () => {
@@ -439,7 +450,11 @@ export function PdfCropViewer({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    target.setPointerCapture(e.pointerId);
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore unsupported or synthetic pointer capture errors
+    }
     if (canvas) {
       activeCanvasRef.current = { pageNo, canvas };
     }
@@ -456,36 +471,51 @@ export function PdfCropViewer({
     setDrag((d) => (d ? { ...d, x1: x, y1: y } : null));
   };
 
-  const handleEndDrag = () => {
+  const handleEndDrag = (e?: React.PointerEvent) => {
+    if (e) {
+      try {
+        (e.currentTarget as HTMLElement)?.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
     if (!drag) return;
     const { pageNo, x0, y0, x1, y1 } = drag;
-    const x = Math.min(x0, x1);
-    const y = Math.min(y0, y1);
-    const w = Math.abs(x1 - x0);
-    const h = Math.abs(y1 - y0);
+    const rawX = Math.min(x0, x1);
+    const rawY = Math.min(y0, y1);
+    const rawW = Math.abs(x1 - x0);
+    const rawH = Math.abs(y1 - y0);
     setDrag(null);
 
-    if (w < 8 || h < 8) {
-      activeCanvasRef.current = null;
-      return; // Treat as accidental click
-    }
-
     const currentActive = activeCanvasRef.current;
+    activeCanvasRef.current = null;
     if (!currentActive || currentActive.pageNo !== pageNo) {
-      activeCanvasRef.current = null;
       return;
     }
 
     const canvas = currentActive.canvas;
-    activeCanvasRef.current = null;
+    const clientW = canvas.clientWidth || 1;
+    const clientH = canvas.clientHeight || 1;
 
-    const displayScaleX = canvas.width / canvas.clientWidth;
-    const displayScaleY = canvas.height / canvas.clientHeight;
+    // Safely clamp crop area within the canvas boundaries
+    const clampedX = Math.max(0, Math.min(clientW, rawX));
+    const clampedY = Math.max(0, Math.min(clientH, rawY));
+    const clampedW = Math.min(clientW - clampedX, Math.max(0, rawW));
+    const clampedH = Math.min(clientH - clampedY, Math.max(0, rawH));
 
-    const sx = x * displayScaleX;
-    const sy = y * displayScaleY;
-    const sw = w * displayScaleX;
-    const sh = h * displayScaleY;
+    if (clampedW < 6 || clampedH < 6) {
+      return; // Accidental micro-click
+    }
+
+    const displayScaleX = canvas.width / clientW;
+    const displayScaleY = canvas.height / clientH;
+
+    const sx = Math.max(0, Math.round(clampedX * displayScaleX));
+    const sy = Math.max(0, Math.round(clampedY * displayScaleY));
+    const sw = Math.min(canvas.width - sx, Math.round(clampedW * displayScaleX));
+    const sh = Math.min(canvas.height - sy, Math.round(clampedH * displayScaleY));
+
+    if (sw <= 0 || sh <= 0) return;
 
     const out = document.createElement('canvas');
     out.width = sw;
@@ -496,20 +526,28 @@ export function PdfCropViewer({
 
     // Coordinate in unscaled base PDF points (scale 1.0)
     const cropRect: CropRect = {
-      x: Math.round(x / effectiveScale),
-      y: Math.round(y / effectiveScale),
-      w: Math.round(w / effectiveScale),
-      h: Math.round(h / effectiveScale),
+      x: Math.round(clampedX / effectiveScale),
+      y: Math.round(clampedY / effectiveScale),
+      w: Math.round(clampedW / effectiveScale),
+      h: Math.round(clampedH / effectiveScale),
+    };
+
+    const handleBlob = (blob: Blob | null) => {
+      if (blob) {
+        onCrop({ sourcePage: pageNo, cropRect, blob });
+      }
     };
 
     out.toBlob(
       (blob) => {
         if (blob) {
-          onCrop({ sourcePage: pageNo, cropRect, blob });
+          handleBlob(blob);
+        } else {
+          out.toBlob(handleBlob, 'image/png');
         }
       },
       'image/webp',
-      0.88,
+      0.92,
     );
   };
 
@@ -617,9 +655,18 @@ export function PdfCropViewer({
         </div>
 
         {/* Right Info / Crop Tool hint */}
-        <div className="ml-auto hidden sm:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-          <Crop className="size-3.5 text-accent-600 dark:text-accent-400" aria-hidden />
-          <span>Drag on any page to crop</span>
+        <div className="ml-auto hidden sm:flex items-center gap-1.5 text-xs">
+          {armedPlaceholder ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-100 px-2.5 py-0.5 font-medium text-accent-900 ring-1 ring-inset ring-accent-400 dark:bg-accent-950 dark:text-accent-200 dark:ring-accent-600 animate-pulse">
+              <Crop className="size-3.5 text-accent-600 dark:text-accent-400" aria-hidden />
+              <span>Armed: <code className="font-bold">[[IMG:{armedPlaceholder}]]</code> — Drag on page to snip</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              <Crop className="size-3.5 text-slate-400" aria-hidden />
+              <span>Select an image placeholder to crop</span>
+            </span>
+          )}
         </div>
       </div>
 
