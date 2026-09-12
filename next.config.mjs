@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // PGlite ships a WASM binary + fs access; it must stay outside the bundler and
-  // run on the Node runtime. Bundling it produces a broken/duplicated instance.
-  serverExternalPackages: ['@electric-sql/pglite', 'katex'],
+  // PGlite and pg ship native/fs code; they must stay outside the bundler and
+  // run on the Node runtime. Bundling produces a broken/duplicated instance.
+  serverExternalPackages: ['@electric-sql/pglite', 'katex', 'pg'],
 
   // Lint runs on build again. It had been off with no config file present,
   // which is how ~60 unused imports and two stale-closure effect bugs shipped

@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { questions, testQuestions, tests } from '@/db/schema';
+import { papers, questions, testQuestions, tests } from '@/db/schema';
 import { TestBuilderClient } from './TestBuilderClient';
 
 export default async function TestBuilderPage({ params }: { params: Promise<{ id: string }> }) {
@@ -10,6 +10,17 @@ export default async function TestBuilderPage({ params }: { params: Promise<{ id
 
   const [test] = await db.select().from(tests).where(eq(tests.id, id));
   if (!test) notFound();
+
+  // Load all registered papers for the picker filter
+  const allPapers = await db
+    .select({
+      id: papers.id,
+      title: papers.title,
+      code: papers.code,
+      examYear: papers.examYear,
+    })
+    .from(papers)
+    .orderBy(desc(papers.createdAt));
 
   // Load all assigned questions for this test
   const assigned = await db
@@ -26,6 +37,11 @@ export default async function TestBuilderPage({ params }: { params: Promise<{ id
       body: questions.body,
       options: questions.options,
       humanCode: questions.humanCode,
+      paperId: questions.paperId,
+      paperTitle: papers.title,
+      paperCode: papers.code,
+      sourceQno: questions.sourceQno,
+      sourcePage: questions.sourcePage,
       difficulty: questions.difficulty,
       expectedTimeS: questions.expectedTimeS,
       chapter: questions.chapter,
@@ -33,6 +49,7 @@ export default async function TestBuilderPage({ params }: { params: Promise<{ id
     })
     .from(testQuestions)
     .innerJoin(questions, eq(questions.id, testQuestions.questionId))
+    .leftJoin(papers, eq(questions.paperId, papers.id))
     .where(eq(testQuestions.testId, id))
     .orderBy(testQuestions.position);
 
@@ -41,6 +58,11 @@ export default async function TestBuilderPage({ params }: { params: Promise<{ id
     .select({
       id: questions.id,
       humanCode: questions.humanCode,
+      paperId: questions.paperId,
+      paperTitle: papers.title,
+      paperCode: papers.code,
+      sourceQno: questions.sourceQno,
+      sourcePage: questions.sourcePage,
       subject: questions.subject,
       type: questions.type,
       status: questions.status,
@@ -52,6 +74,7 @@ export default async function TestBuilderPage({ params }: { params: Promise<{ id
       topic: questions.topic,
     })
     .from(questions)
+    .leftJoin(papers, eq(questions.paperId, papers.id))
     .orderBy(desc(questions.createdAt));
 
   return (
@@ -59,6 +82,7 @@ export default async function TestBuilderPage({ params }: { params: Promise<{ id
       initialTest={test}
       initialAssignedQuestions={assigned}
       allBankQuestions={allBankQuestions}
+      papers={allPapers}
     />
   );
 }

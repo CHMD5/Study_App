@@ -53,6 +53,11 @@ type AssignedQuestion = {
   body: string;
   options: any[];
   humanCode: string | null;
+  paperId?: string | null;
+  paperTitle?: string | null;
+  paperCode?: string | null;
+  sourceQno?: number | null;
+  sourcePage?: number | null;
   difficulty: number | null;
   expectedTimeS: number | null;
   chapter: string | null;
@@ -62,6 +67,11 @@ type AssignedQuestion = {
 type BankQuestion = {
   id: string;
   humanCode: string | null;
+  paperId?: string | null;
+  paperTitle?: string | null;
+  paperCode?: string | null;
+  sourceQno?: number | null;
+  sourcePage?: number | null;
   subject: 'physics' | 'chemistry' | 'maths' | 'biology';
   type: 'mcq' | 'integer';
   status: 'draft' | 'verified' | 'archived';
@@ -77,10 +87,12 @@ export function TestBuilderClient({
   initialTest,
   initialAssignedQuestions,
   allBankQuestions,
+  papers = [],
 }: {
   initialTest: any;
   initialAssignedQuestions: AssignedQuestion[];
   allBankQuestions: BankQuestion[];
+  papers?: Array<{ id: string; title: string; code: string; examYear?: number | null }>;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -150,6 +162,7 @@ export function TestBuilderClient({
   const [resultsPolicy, setResultsPolicy] = useState(test.resultsPolicy);
 
   // Picker filters
+  const [filterPaper, setFilterPaper] = useState<string>('all');
   const [filterSubject, setFilterSubject] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('verified');
@@ -158,6 +171,20 @@ export function TestBuilderClient({
 
   // Stats calculation
   const assignedIds = useMemo(() => new Set(assigned.map((q) => q.questionId)), [assigned]);
+
+  const paperCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const q of allBankQuestions) {
+      if (q.paperId) {
+        counts.set(q.paperId, (counts.get(q.paperId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [allBankQuestions]);
+
+  const hasStandaloneQuestions = useMemo(() => {
+    return allBankQuestions.some((q) => !q.paperId);
+  }, [allBankQuestions]);
 
   const subjectCounts = useMemo(() => {
     const counts = { physics: 0, chemistry: 0, maths: 0, biology: 0 };
@@ -177,21 +204,42 @@ export function TestBuilderClient({
 
   // Picker filtered items
   const filteredBank = useMemo(() => {
-    return allBankQuestions.filter((q) => {
+    let list = allBankQuestions.filter((q) => {
       if (assignedIds.has(q.id)) return false; // Already added
       if (filterSubject !== 'all' && q.subject !== filterSubject) return false;
       if (filterType !== 'all' && q.type !== filterType) return false;
       if (filterStatus !== 'all' && q.status !== filterStatus) return false;
+      if (filterPaper !== 'all') {
+        if (filterPaper === 'none') {
+          if (q.paperId) return false;
+        } else if (q.paperId !== filterPaper) {
+          return false;
+        }
+      }
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const matchesBody = q.body.toLowerCase().includes(query);
         const matchesCode = q.humanCode?.toLowerCase().includes(query);
         const matchesChapter = q.chapter?.toLowerCase().includes(query);
-        if (!matchesBody && !matchesCode && !matchesChapter) return false;
+        const matchesPaper =
+          q.paperTitle?.toLowerCase().includes(query) ||
+          q.paperCode?.toLowerCase().includes(query);
+        if (!matchesBody && !matchesCode && !matchesChapter && !matchesPaper) return false;
       }
       return true;
     });
-  }, [allBankQuestions, assignedIds, filterSubject, filterType, filterStatus, searchQuery]);
+
+    // Natural sequence order when filtered to a specific paper (Q1, Q2, Q3...)
+    if (filterPaper !== 'all' && filterPaper !== 'none') {
+      list = [...list].sort((a, b) => {
+        const qnoA = a.sourceQno ?? 999999;
+        const qnoB = b.sourceQno ?? 999999;
+        return qnoA - qnoB;
+      });
+    }
+
+    return list;
+  }, [allBankQuestions, assignedIds, filterSubject, filterType, filterStatus, filterPaper, searchQuery]);
 
   /** Every write to the assigned list goes through here so `questionsDirty`
    *  can never drift out of sync with what is on screen. */
@@ -228,6 +276,11 @@ export function TestBuilderClient({
       body: q.body,
       options: q.options,
       humanCode: q.humanCode,
+      paperId: q.paperId,
+      paperTitle: q.paperTitle,
+      paperCode: q.paperCode,
+      sourceQno: q.sourceQno,
+      sourcePage: q.sourcePage,
       difficulty: q.difficulty,
       expectedTimeS: q.expectedTimeS,
       chapter: q.chapter,
@@ -650,6 +703,14 @@ export function TestBuilderClient({
                               <Badge tone="amber">Unverified</Badge>
                             )}
                             {q.chapter && <span className="text-xs text-slate-500 dark:text-slate-400">• {q.chapter}</span>}
+                            {(q.paperCode || q.paperTitle) && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                                title={q.paperTitle ?? ''}
+                              >
+                                📄 {q.paperCode ?? q.paperTitle} {q.sourceQno ? `• Q${q.sourceQno}` : ''}
+                              </span>
+                            )}
                           </div>
 
                           {/* Question body preview */}
@@ -761,10 +822,24 @@ export function TestBuilderClient({
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex-1 min-w-[200px]">
                   <Input
-                    placeholder="Search question text, chapter, code..."
+                    placeholder="Search question text, chapter, code, paper..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
+                </div>
+
+                <div className="w-52">
+                  <Select value={filterPaper} onChange={(e) => setFilterPaper(e.target.value)} aria-label="Filter by Paper">
+                    <option value="all">All Papers</option>
+                    {papers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.code ? `${p.code} — ${p.title}` : p.title} ({paperCounts.get(p.id) ?? 0})
+                      </option>
+                    ))}
+                    {hasStandaloneQuestions && (
+                      <option value="none">Standalone / No Paper</option>
+                    )}
+                  </Select>
                 </div>
 
                 <div className="w-36">
@@ -820,6 +895,11 @@ export function TestBuilderClient({
                   body: q.body,
                   options: q.options,
                   humanCode: q.humanCode,
+                  paperId: q.paperId,
+                  paperTitle: q.paperTitle,
+                  paperCode: q.paperCode,
+                  sourceQno: q.sourceQno,
+                  sourcePage: q.sourcePage,
                   difficulty: q.difficulty,
                   expectedTimeS: q.expectedTimeS,
                   chapter: q.chapter,
@@ -860,6 +940,11 @@ export function TestBuilderClient({
                         <Badge tone="amber">Draft</Badge>
                       )}
                       {q.chapter && <span className="text-xs text-slate-500 dark:text-slate-400">• {q.chapter}</span>}
+                      {(q.paperCode || q.paperTitle) && (
+                        <Badge tone="slate" title={q.paperTitle ?? ''}>
+                          📄 {q.paperCode ?? q.paperTitle} {q.sourceQno ? `• Q${q.sourceQno}` : ''}
+                        </Badge>
+                      )}
                     </div>
 
                     <div className="text-xs text-slate-700 dark:text-slate-300">

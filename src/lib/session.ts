@@ -6,7 +6,8 @@ import { SignJWT, jwtVerify } from 'jose';
 import { DATA_DIR, ensureDataDirs } from './paths';
 
 export const SESSION_COOKIE = 'vtp_session';
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+// 90 days persistent session so the browser remembers the user across restarts
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 90;
 
 export type Role = 'teacher' | 'student';
 
@@ -65,6 +66,7 @@ export async function issueSession(session: Session): Promise<void> {
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_TTL_SECONDS,
+    expires: new Date(Date.now() + SESSION_TTL_SECONDS * 1000),
     // The local build is served over plain http on localhost, where a secure
     // cookie would simply never be sent. Anything not-development gets it, and
     // COOKIE_SECURE=true forces it on for a local https reverse proxy.
